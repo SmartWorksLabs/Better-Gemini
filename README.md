@@ -13,6 +13,7 @@ A Manifest V3 Chrome Extension that natively hides and reveals the Gemini chat i
 - **Corner Pill That Makes Room**: The settings pill sits 12px from the chosen corner, adapts to the window size, and moves aside for Gemini's buttons and other extensions' widgets (can be turned off)
 - **Shadow DOM Isolation**: UI won't break from Gemini's CSS updates
 - **Instant Reactivity**: Settings changes apply immediately without page reload
+- **Light and Dark Toolbar Icons**: The toolbar icon switches to match Chrome's light or dark mode
 
 ## Installation
 
@@ -27,7 +28,11 @@ A Manifest V3 Chrome Extension that natively hides and reveals the Gemini chat i
 
 ### Icons
 
-The icons in `/icons` are resized from the full-size logo, `icons/logo-source.png`, by `scripts/generate_icons.py`. To change the logo, replace `logo-source.png` with a square image and regenerate the icons (requires [Pillow](https://pypi.org/project/Pillow/)) from the repo root:
+The icons in `/icons` are resized from two full-size logos by `scripts/generate_icons.py`:
+- `icons/logo-source.png` (light mode) becomes `icon16.png`, `icon32.png`, `icon48.png` and `icon128.png`. These are the default icons, used on the extensions page and in the Chrome Web Store.
+- `icons/logo-source-dark.png` (dark mode) becomes `icon16-dark.png`, `icon32-dark.png`, `icon48-dark.png` and `icon128-dark.png`.
+
+To change a logo, replace its source file with a square image and regenerate the icons (requires [Pillow](https://pypi.org/project/Pillow/)) from the repo root:
 
 ```bash
 pip install Pillow
@@ -42,10 +47,10 @@ python3 scripts/generate_icons.py
 ├── content.js         # Main logic, pill UI, state management
 ├── content.css        # Hide/reveal animations and states
 ├── icons/             # Extension icons
-│   ├── logo-source.png    # Full-size logo the icons are made from
-│   ├── icon16.png
-│   ├── icon48.png
-│   └── icon128.png
+│   ├── logo-source.png       # Full-size light mode logo
+│   ├── logo-source-dark.png  # Full-size dark mode logo
+│   ├── icon{16,32,48,128}.png       # Light mode icons (the default)
+│   └── icon{16,32,48,128}-dark.png  # Dark mode toolbar icons
 ├── scripts/
 │   └── generate_icons.py  # Resizes the logo into the icons
 └── README.md
@@ -94,6 +99,15 @@ The reveal counter is stored in `chrome.storage.local`, because it changes often
 ### 7-Day Review Hook
 
 After 7 days of use, a "Leave a Review" link appears in the settings menu. This is calculated from `firstInstalledDate`. The link points to the extension's own Chrome Web Store reviews page, so it only works once the extension is published there.
+
+### Light and Dark Toolbar Icons
+
+Chrome's manifest has no setting for theme-based icons (Firefox's `theme_icons` key isn't supported), so the icon is swapped in code:
+1. The content script checks `window.matchMedia('(prefers-color-scheme: dark)')` and watches it for changes. This follows Chrome's light/dark mode, or the system setting when Chrome is set to "Device".
+2. It sends the result to `background.js`, which calls `chrome.action.setIcon` with the light or dark icons. The background service worker can't check the theme itself, because it has no page to run `matchMedia` in.
+3. The last theme is saved in `chrome.storage.local`, so the right icon is restored when Chrome restarts.
+
+Because the theme is checked from Gemini tabs, a theme change is picked up the next time a Gemini tab is open.
 
 ## Customization
 
