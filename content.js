@@ -8,21 +8,34 @@
     'footer'
   ].join(', ');
 
+  // Distance from the screen edge, and the gap left beside other items.
+  const EDGE_PADDING = 12;
+  const OBSTACLE_GAP = 8;
+  const MAX_PLACEMENT_STEPS = 60;
+
+  const SYNC_KEYS = ['corner', 'autoHide', 'hiddenOpacity', 'typeToChat', 'avoidOverlap', 'firstInstalledDate'];
+  const TOGGLE_KEYS = ['autoHide', 'typeToChat', 'avoidOverlap'];
+
   let settings = {
     corner: 'top-left',
     autoHide: true,
+    hiddenOpacity: 0,
+    typeToChat: true,
+    avoidOverlap: true,
     interactionsCount: 0,
     firstInstalledDate: Date.now()
   };
 
+  let hostElement = null;
   let pillElement = null;
   let shadowRoot = null;
   let menuOpen = false;
+  let placementScheduled = false;
 
   // Load settings from storage
   function loadSettings() {
     return new Promise((resolve) => {
-      chrome.storage.sync.get(['corner', 'autoHide', 'firstInstalledDate'], (syncResult) => {
+      chrome.storage.sync.get(SYNC_KEYS, (syncResult) => {
         chrome.storage.local.get(['interactionsCount'], (localResult) => {
           settings = { ...settings, ...syncResult, ...localResult };
           if (!syncResult.firstInstalledDate) {
@@ -57,26 +70,191 @@
   function applyHideState() {
     document.body.classList.add('hide-chatbar-enabled');
     document.body.classList.toggle('hide-chatbar-active', settings.autoHide);
+    applyHiddenOpacity(settings.hiddenOpacity);
   }
 
-  // Update pill position
-  function updatePillPosition() {
-    if (!pillElement) return;
+  function applyHiddenOpacity(percent) {
+    document.documentElement.style.setProperty('--hide-chatbar-hidden-opacity', String(percent / 100));
+  }
 
-    pillElement.classList.remove(
-      'pos-top-left',
-      'pos-top-right',
-      'pos-bottom-left',
-      'pos-bottom-right'
+  // ---------------------------------------------------------------------------
+  // Pill placement
+  // ---------------------------------------------------------------------------
+
+  function viewportSize() {
+    return {
+      width: document.documentElement.clientWidth || window.innerWidth,
+      height: document.documentElement.clientHeight || window.innerHeight
+    };
+  }
+
+  // Content inside a scrolling area (chat messages, the chat list) moves
+  // around, so it should not push the pill away.
+  function isInsideScrollingArea(el) {
+    for (let node = el.parentElement; node && node !== document.body; node = node.parentElement) {
+      const overflowY = getComputedStyle(node).overflowY;
+      if ((overflowY === 'auto' || overflowY === 'scroll') && node.scrollHeight > node.clientHeight + 1) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Decides whether the element hit at (px, py) is something the pill should
+  // not cover: buttons, logos, other extensions' widgets. Big layout pieces
+  // (side rails, top bars, the page itself) are not obstacles; the items
+  // inside them are. Returns { rect } for obstacles, or null.
+  function asObstacle(el, px, py, viewport) {
+    if (el === document.documentElement || el === document.body) return null;
+    if (el === hostElement) return null;
+    if (el.closest(BAR_SELECTORS)) return null;
+
+    const style = getComputedStyle(el);
+    if (style.visibility === 'hidden' || style.opacity === '0') return null;
+    if (isInsideScrollingArea(el)) return null;
+
+    // A hit outside the element's own box means it is drawing content that
+    // lives elsewhere, such as another extension's widget inside a shadow
+    // root. Its real size can't be measured, so the caller steps past it.
+    const rect = el.getBoundingClientRect();
+    const containsPoint = px >= rect.left && px <= rect.right && py >= rect.top && py <= rect.bottom;
+    if (!containsPoint || rect.width === 0 || rect.height === 0) return { rect: null };
+
+    if (rect.width > viewport.width * 0.5 || rect.height > viewport.height * 0.5) return null;
+    return { rect };
+  }
+
+  // Points at most SAMPLE_SPACING apart, including both ends, so small items
+  // like icon buttons can't slip between them.
+  const SAMPLE_SPACING = 12;
+  function samplePoints(start, length) {
+    const count = Math.max(2, Math.ceil(length / SAMPLE_SPACING) + 1);
+    const points = [];
+    for (let i = 0; i < count; i++) {
+      points.push(start + 1 + ((length - 2) * i) / (count - 1));
+    }
+    return points;
+  }
+
+  // Checks a grid of points across the given box and returns the first
+  // obstacle found.
+  function findObstacle(x, y, width, height, viewport) {
+    const xs = samplePoints(x, width);
+    const ys = samplePoints(y, height);
+
+    for (const py of ys) {
+      for (const px of xs) {
+        if (px < 0 || py < 0 || px >= viewport.width || py >= viewport.height) continue;
+
+        const topElement = document.elementsFromPoint(px, py).find((el) => el !== hostElement);
+        const obstacle = topElement && asObstacle(topElement, px, py, viewport);
+        if (obstacle) return obstacle;
+      }
+    }
+    return null;
+  }
+
+  // Slides the pill away from the corner along one axis until it finds a free
+  // spot, without going past the middle of the screen.
+  function scanForFreeSpot(start, size, viewport, axis, towardsStart) {
+    const limit = axis === 'x' ? viewport.width : viewport.height;
+    let pos = axis === 'x' ? start.x : start.y;
+
+    for (let step = 0; step < MAX_PLACEMENT_STEPS; step++) {
+      const x = axis === 'x' ? pos : start.x;
+      const y = axis === 'y' ? pos : start.y;
+      // Pad along the scan direction so the pill keeps a gap from neighbours
+      // even when their size can't be measured.
+      const padX = axis === 'x' ? OBSTACLE_GAP - 1 : 0;
+      const padY = axis === 'y' ? OBSTACLE_GAP - 1 : 0;
+      const hit = findObstacle(x - padX, y - padY, size.width + padX * 2, size.height + padY * 2, viewport);
+      if (!hit) return { x, y };
+
+      let next;
+      if (hit.rect) {
+        const farEdge = axis === 'x'
+          ? (towardsStart ? hit.rect.left : hit.rect.right)
+          : (towardsStart ? hit.rect.top : hit.rect.bottom);
+        const extent = axis === 'x' ? size.width : size.height;
+        next = towardsStart ? farEdge - OBSTACLE_GAP - extent : farEdge + OBSTACLE_GAP;
+      }
+      if (next === undefined || (towardsStart ? next >= pos : next <= pos)) {
+        next = towardsStart ? pos - OBSTACLE_GAP : pos + OBSTACLE_GAP;
+      }
+      pos = next;
+
+      const extent = axis === 'x' ? size.width : size.height;
+      const pastMiddle = towardsStart ? pos < limit / 2 : pos + extent > limit / 2;
+      if (pastMiddle || pos < EDGE_PADDING || pos + extent > limit - EDGE_PADDING) break;
+    }
+    return null;
+  }
+
+  function computePillPosition() {
+    const viewport = viewportSize();
+    const size = { width: pillElement.offsetWidth, height: pillElement.offsetHeight };
+    const right = settings.corner.endsWith('right');
+    const bottom = settings.corner.startsWith('bottom');
+
+    const corner = {
+      x: right ? viewport.width - EDGE_PADDING - size.width : EDGE_PADDING,
+      y: bottom ? viewport.height - EDGE_PADDING - size.height : EDGE_PADDING
+    };
+    corner.x = Math.max(0, corner.x);
+    corner.y = Math.max(0, corner.y);
+
+    if (!settings.avoidOverlap) return corner;
+
+    return (
+      scanForFreeSpot(corner, size, viewport, 'x', right) ||
+      scanForFreeSpot(corner, size, viewport, 'y', bottom) ||
+      corner
     );
+  }
+
+  function placePill() {
+    placementScheduled = false;
+    if (!pillElement || menuOpen) return;
+
+    pillElement.classList.remove('pos-top-left', 'pos-top-right', 'pos-bottom-left', 'pos-bottom-right');
     pillElement.classList.add(`pos-${settings.corner}`);
+
+    const { x, y } = computePillPosition();
+    pillElement.style.left = `${Math.round(x)}px`;
+    pillElement.style.top = `${Math.round(y)}px`;
+
+    // Keep the menu inside the screen, however small the window is.
+    const viewport = viewportSize();
+    const menu = shadowRoot.querySelector('.menu');
+    const opensDown = settings.corner.startsWith('top');
+    const room = opensDown
+      ? viewport.height - (y + pillElement.offsetHeight) - OBSTACLE_GAP - EDGE_PADDING
+      : y - OBSTACLE_GAP - EDGE_PADDING;
+    menu.style.maxHeight = `${Math.max(160, Math.floor(room))}px`;
+
+    if (!pillElement.classList.contains('placed')) {
+      // Skip the slide animation on the very first placement.
+      pillElement.classList.add('placed');
+      requestAnimationFrame(() => pillElement.classList.add('animate'));
+    }
+  }
+
+  function schedulePlacement() {
+    if (placementScheduled) return;
+    placementScheduled = true;
+    requestAnimationFrame(placePill);
   }
 
   function setMenuOpen(open) {
     menuOpen = open;
     const menu = shadowRoot && shadowRoot.querySelector('.menu');
     if (menu) menu.classList.toggle('open', open);
+    if (!open) schedulePlacement();
   }
+
+  // ---------------------------------------------------------------------------
+  // Pill UI
+  // ---------------------------------------------------------------------------
 
   // Create the pill styles
   function getPillStyles() {
@@ -90,34 +268,23 @@
         box-sizing: border-box;
       }
 
-      button {
+      button, input {
         font-family: inherit;
       }
 
       .pill-container {
         position: fixed;
         z-index: 999999;
-        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        visibility: hidden;
       }
 
-      .pill-container.pos-top-left {
-        top: 80px;
-        left: 16px;
+      .pill-container.placed {
+        visibility: visible;
       }
 
-      .pill-container.pos-top-right {
-        top: 80px;
-        right: 72px;
-      }
-
-      .pill-container.pos-bottom-left {
-        bottom: 100px;
-        left: 16px;
-      }
-
-      .pill-container.pos-bottom-right {
-        bottom: 100px;
-        right: 72px;
+      .pill-container.animate {
+        transition: left 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                    top 0.25s cubic-bezier(0.4, 0, 0.2, 1);
       }
 
       .pill-button {
@@ -131,6 +298,7 @@
         color: var(--gm-sys-color-on-surface, #1f1f1f);
         font-size: 13px;
         font-weight: 500;
+        white-space: nowrap;
         cursor: pointer;
         box-shadow: 
           0 1px 2px rgba(0, 0, 0, 0.1),
@@ -159,7 +327,9 @@
 
       .menu {
         position: absolute;
-        min-width: 220px;
+        width: 260px;
+        max-width: calc(100vw - 24px);
+        overflow-y: auto;
         padding: 8px 0;
         background: var(--gm-sys-color-surface-container-low, #f7f7f7);
         border-radius: 16px;
@@ -212,6 +382,7 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
+        gap: 12px;
         padding: 12px 16px;
         cursor: pointer;
         transition: background 0.15s ease;
@@ -221,12 +392,24 @@
         background: var(--gm-sys-color-surface-container, #ebebeb);
       }
 
+      .menu-item-text {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
       .menu-item-label {
         font-size: 14px;
         color: var(--gm-sys-color-on-surface, #1f1f1f);
       }
 
+      .menu-item-hint {
+        font-size: 11px;
+        color: var(--gm-sys-color-on-surface-variant, #5f5f5f);
+      }
+
       .toggle {
+        flex-shrink: 0;
         width: 36px;
         height: 20px;
         background: var(--gm-sys-color-outline, #79747e);
@@ -255,6 +438,29 @@
 
       .toggle.active::after {
         transform: translateX(16px);
+      }
+
+      .slider-row {
+        padding: 8px 16px 12px;
+      }
+
+      .slider-heading {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+
+      .slider-value {
+        font-size: 13px;
+        font-variant-numeric: tabular-nums;
+        color: var(--gm-sys-color-on-surface-variant, #5f5f5f);
+      }
+
+      .slider {
+        width: 100%;
+        margin: 0;
+        cursor: pointer;
+        accent-color: var(--gm-sys-color-primary, #0b57d0);
       }
 
       .corner-selector {
@@ -310,6 +516,19 @@
     `;
   }
 
+  function toggleRowHTML(key, label, hint) {
+    const on = Boolean(settings[key]);
+    return `
+      <div class="menu-item" data-setting="${key}" role="switch" tabindex="0" aria-checked="${on}">
+        <span class="menu-item-text">
+          <span class="menu-item-label">${label}</span>
+          ${hint ? `<span class="menu-item-hint">${hint}</span>` : ''}
+        </span>
+        <div class="toggle ${on ? 'active' : ''}"></div>
+      </div>
+    `;
+  }
+
   // Create the pill HTML
   function createPillHTML() {
     const reviewUrl = `https://chromewebstore.google.com/detail/${chrome.runtime.id}/reviews`;
@@ -323,9 +542,15 @@
         </button>
         <div class="menu">
           <div class="menu-header">Settings</div>
-          <div class="menu-item" data-action="toggle-autohide" role="switch" tabindex="0" aria-checked="${settings.autoHide}">
-            <span class="menu-item-label">Auto-Hide</span>
-            <div class="toggle ${settings.autoHide ? 'active' : ''}" data-toggle="autohide"></div>
+          ${toggleRowHTML('autoHide', 'Auto-Hide')}
+          ${toggleRowHTML('typeToChat', 'Type anywhere to chat', 'Start typing to open the chat bar')}
+          <div class="slider-row">
+            <div class="slider-heading">
+              <label class="menu-item-label" for="hidden-opacity">Hidden bar visibility</label>
+              <span class="slider-value">${settings.hiddenOpacity}%</span>
+            </div>
+            <input id="hidden-opacity" class="slider" type="range" min="0" max="100" step="5"
+              value="${settings.hiddenOpacity}" aria-label="Hidden bar visibility">
           </div>
           <div class="divider"></div>
           <div class="menu-header">Position</div>
@@ -335,6 +560,7 @@
             <button class="corner-btn ${settings.corner === 'bottom-left' ? 'active' : ''}" data-corner="bottom-left">↙ Bottom Left</button>
             <button class="corner-btn ${settings.corner === 'bottom-right' ? 'active' : ''}" data-corner="bottom-right">↘ Bottom Right</button>
           </div>
+          ${toggleRowHTML('avoidOverlap', 'Make room for other items', 'Turn off to always sit in the exact corner')}
           <div class="review-prompt" style="display: none;">
             <div class="divider"></div>
             <a class="review-link" href="${reviewUrl}" target="_blank" rel="noopener noreferrer">
@@ -348,10 +574,11 @@
 
   function syncToggleUI() {
     if (!shadowRoot) return;
-    const toggleEl = shadowRoot.querySelector('[data-toggle="autohide"]');
-    const toggleItem = shadowRoot.querySelector('[data-action="toggle-autohide"]');
-    if (toggleEl) toggleEl.classList.toggle('active', settings.autoHide);
-    if (toggleItem) toggleItem.setAttribute('aria-checked', String(settings.autoHide));
+    shadowRoot.querySelectorAll('[data-setting]').forEach((row) => {
+      const on = Boolean(settings[row.dataset.setting]);
+      row.setAttribute('aria-checked', String(on));
+      row.querySelector('.toggle').classList.toggle('active', on);
+    });
   }
 
   function syncCornerUI() {
@@ -361,14 +588,45 @@
     });
   }
 
+  function syncSliderUI() {
+    if (!shadowRoot) return;
+    shadowRoot.querySelector('.slider').value = String(settings.hiddenOpacity);
+    shadowRoot.querySelector('.slider-value').textContent = `${settings.hiddenOpacity}%`;
+  }
+
+  // Applies a setting change on this page (from the menu or another tab).
+  function applySetting(key) {
+    if (key === 'autoHide') applyHideState();
+    if (key === 'hiddenOpacity') {
+      applyHiddenOpacity(settings.hiddenOpacity);
+      syncSliderUI();
+    }
+    if (key === 'corner') {
+      syncCornerUI();
+      pillElement.classList.remove('animate');
+      placePillNow();
+      requestAnimationFrame(() => pillElement.classList.add('animate'));
+    }
+    if (key === 'avoidOverlap') placePillNow();
+    if (TOGGLE_KEYS.includes(key)) syncToggleUI();
+  }
+
+  // Repositions even while the menu is open, for changes made from the menu.
+  function placePillNow() {
+    const wasOpen = menuOpen;
+    menuOpen = false;
+    placePill();
+    menuOpen = wasOpen;
+  }
+
   // Initialize the pill UI
   function createPill() {
     if (document.getElementById('hide-chatbar-pill-host')) return;
 
-    const host = document.createElement('div');
-    host.id = 'hide-chatbar-pill-host';
+    hostElement = document.createElement('div');
+    hostElement.id = 'hide-chatbar-pill-host';
 
-    shadowRoot = host.attachShadow({ mode: 'closed' });
+    shadowRoot = hostElement.attachShadow({ mode: 'closed' });
 
     const style = document.createElement('style');
     style.textContent = getPillStyles();
@@ -380,8 +638,7 @@
 
     pillElement = shadowRoot.querySelector('.pill-container');
     const pillButton = shadowRoot.querySelector('.pill-button');
-    const toggleItem = shadowRoot.querySelector('[data-action="toggle-autohide"]');
-    const cornerBtns = shadowRoot.querySelectorAll('.corner-btn');
+    const slider = shadowRoot.querySelector('.slider');
     const reviewPrompt = shadowRoot.querySelector('.review-prompt');
 
     if (shouldShowReviewPrompt()) {
@@ -395,7 +652,7 @@
     // Clicks inside the shadow DOM still bubble to document, so only
     // close the menu when the click really happened outside the pill.
     document.addEventListener('click', (e) => {
-      if (menuOpen && !e.composedPath().includes(host)) {
+      if (menuOpen && !e.composedPath().includes(hostElement)) {
         setMenuOpen(false);
       }
     });
@@ -406,30 +663,118 @@
       }
     });
 
-    function toggleAutoHide() {
-      saveSettings({ autoHide: !settings.autoHide });
-      syncToggleUI();
-      applyHideState();
-    }
-
-    toggleItem.addEventListener('click', toggleAutoHide);
-    toggleItem.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        toggleAutoHide();
-      }
-    });
-
-    cornerBtns.forEach((btn) => {
-      btn.addEventListener('click', () => {
-        saveSettings({ corner: btn.dataset.corner });
-        syncCornerUI();
-        updatePillPosition();
+    shadowRoot.querySelectorAll('[data-setting]').forEach((row) => {
+      const key = row.dataset.setting;
+      const flip = () => {
+        saveSettings({ [key]: !settings[key] });
+        applySetting(key);
+      };
+      row.addEventListener('click', flip);
+      row.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          flip();
+        }
       });
     });
 
-    document.body.appendChild(host);
+    // Preview while dragging, but only save when the slider is released,
+    // to stay within chrome.storage.sync's write limits.
+    slider.addEventListener('input', () => {
+      settings.hiddenOpacity = Number(slider.value);
+      applyHiddenOpacity(settings.hiddenOpacity);
+      shadowRoot.querySelector('.slider-value').textContent = `${settings.hiddenOpacity}%`;
+    });
+    slider.addEventListener('change', () => {
+      saveSettings({ hiddenOpacity: Number(slider.value) });
+    });
+
+    shadowRoot.querySelectorAll('.corner-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        saveSettings({ corner: btn.dataset.corner });
+        applySetting('corner');
+      });
+    });
+
+    document.body.appendChild(hostElement);
+    placePill();
+
+    // Re-check the spot when the window changes size and every couple of
+    // seconds, since Gemini and other extensions add and move items.
+    window.addEventListener('resize', schedulePlacement);
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', schedulePlacement);
+    setInterval(() => {
+      if (!document.hidden) schedulePlacement();
+    }, 2000);
   }
+
+  // ---------------------------------------------------------------------------
+  // Type anywhere to chat
+  // ---------------------------------------------------------------------------
+
+  function isEditable(el) {
+    return el instanceof Element &&
+      (el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT');
+  }
+
+  function isVisible(el) {
+    return typeof el.checkVisibility === 'function' ? el.checkVisibility() : el.getClientRects().length > 0;
+  }
+
+  // Leave keys alone while a dialog or popup menu is open.
+  function hasOpenOverlay() {
+    const overlays = document.querySelectorAll(
+      'dialog[open], [role="dialog"], [role="alertdialog"], [role="menu"], .cdk-overlay-pane'
+    );
+    return Array.from(overlays).some((el) => el.childElementCount > 0 && isVisible(el));
+  }
+
+  function findChatEditor() {
+    const editors = Array.from(document.querySelectorAll('[contenteditable="true"], textarea'));
+    return editors.find((el) => el.closest(BAR_SELECTORS)) || editors[0] || null;
+  }
+
+  function moveCaretToEnd(el) {
+    if (el.tagName === 'TEXTAREA') {
+      el.selectionStart = el.selectionEnd = el.value.length;
+      return;
+    }
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  function watchTyping() {
+    // Bubble phase on window, so Gemini's own shortcuts get the key first.
+    window.addEventListener('keydown', (e) => {
+      if (!settings.typeToChat || e.defaultPrevented || e.isComposing) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      // Only single printable characters. Space is skipped so it can still scroll the page.
+      if (e.key.length !== 1 || e.key === ' ') return;
+
+      const path = e.composedPath();
+      if (hostElement && path.includes(hostElement)) return;
+      if (path.some(isEditable) || isEditable(document.activeElement)) return;
+      if (hasOpenOverlay()) return;
+
+      const editor = findChatEditor();
+      if (!editor) return;
+
+      e.preventDefault();
+      editor.focus();
+      moveCaretToEnd(editor);
+      // insertText fires the same input events as real typing, so Gemini
+      // enables its send button and keeps its draft in sync.
+      document.execCommand('insertText', false, e.key);
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Content and interaction tracking
+  // ---------------------------------------------------------------------------
 
   // Gemini streams responses into the DOM, which fires a large number of
   // mutations, so the content check is batched to once per animation frame.
@@ -479,19 +824,14 @@
 
   // Listen for storage changes (instant reactivity across tabs)
   chrome.storage.onChanged.addListener((changes, namespace) => {
-    if (namespace !== 'sync') return;
+    if (namespace !== 'sync' || !pillElement) return;
 
-    if (changes.corner) {
-      settings.corner = changes.corner.newValue;
-      updatePillPosition();
-      syncCornerUI();
-    }
-
-    if (changes.autoHide) {
-      settings.autoHide = changes.autoHide.newValue;
-      applyHideState();
-      syncToggleUI();
-    }
+    Object.keys(changes).forEach((key) => {
+      if (!SYNC_KEYS.includes(key) || changes[key].newValue === undefined) return;
+      if (settings[key] === changes[key].newValue) return;
+      settings[key] = changes[key].newValue;
+      applySetting(key);
+    });
   });
 
   async function init() {
@@ -500,6 +840,7 @@
     createPill();
     watchInputContent();
     trackInteractions();
+    watchTyping();
   }
 
   if (document.readyState === 'loading') {

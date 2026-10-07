@@ -4,11 +4,13 @@ A Manifest V3 Chrome Extension that natively hides and reveals the Gemini chat i
 
 ## Features
 
-- **Auto-Hide**: The chat input bar slides down, leaving only an 8px hotzone visible
+- **Auto-Hide**: The chat input bar slides down, leaving only an 8px hotzone. It is fully invisible by default
+- **Adjustable Visibility**: A slider sets how visible the hidden bar is, from 0% to 100%
 - **Smart Reveal**: Bar appears on hover or when focused
+- **Type Anywhere to Chat**: Start typing anywhere on the page and the bar opens with your text already in it
 - **Content Protection**: Bar stays visible when you're typing
 - **Material 3 Design**: Matches Gemini's native styling using its CSS variables
-- **Configurable Position**: Move the settings pill to any corner
+- **Corner Pill That Makes Room**: The settings pill sits 12px from the chosen corner, adapts to the window size, and moves aside for Gemini's buttons and other extensions' widgets (can be turned off)
 - **Shadow DOM Isolation**: UI won't break from Gemini's CSS updates
 - **Instant Reactivity**: Settings changes apply immediately without page reload
 
@@ -56,26 +58,31 @@ The extension uses CSS transforms (not `display: none`) to hide the input bar:
 
 ```css
 transform: translateY(calc(100% - 8px));
-opacity: 0.15;
+opacity: var(--hide-chatbar-hidden-opacity, 0); /* set by the visibility slider */
 ```
 
 This leaves an 8px "hotzone" at the bottom. The bar smoothly reveals on:
 - **Hover**: Moving your mouse over the hotzone
 - **Focus**: Clicking into the input area
 - **Content**: When there's text in the draft (prevents hiding mid-message)
+- **Typing**: Pressing a letter, number or symbol key while no text box is focused moves the key into the chat box. Shortcuts that use Ctrl, Cmd or Alt, the space bar, and keys pressed while a dialog or menu is open are left alone
 
 ### The Pill UI
 
 A floating pill widget is injected using a **closed Shadow DOM** for style isolation. It:
 - Uses Gemini's native CSS variables for colors
-- Supports 4 corner positions with safe-zone offsets
-- Opens a settings menu on click
+- Sits 12px from the chosen corner and re-checks its spot when the window is resized and every 2 seconds
+- With **Make room for other items** on (the default), it slides along the edge, away from the corner, until it finds a free spot with an 8px gap. Big layout areas such as side rails and top bars don't count as being in the way, and neither does scrolling chat content. If there's no free spot before the middle of the screen, it tries going down (or up) instead, then falls back to the exact corner
+- Opens a settings menu on click, sized to fit the window
 
 ### Settings Storage
 
 User preferences are stored in `chrome.storage.sync` (synced across the user's browsers):
 - `corner`: Pill position (`'top-left'`, `'top-right'`, `'bottom-left'`, `'bottom-right'`)
 - `autoHide`: Whether auto-hide is enabled
+- `hiddenOpacity`: How visible the hidden bar is, from `0` to `100` (default `0`)
+- `typeToChat`: Whether typing anywhere opens the chat bar (default `true`)
+- `avoidOverlap`: Whether the pill moves aside for other items (default `true`)
 - `firstInstalledDate`: Timestamp of first install
 
 The reveal counter is stored in `chrome.storage.local`, because it changes often and `sync` storage has strict write limits:
@@ -95,15 +102,13 @@ In `content.css`, modify the `translateY` value:
 transform: translateY(calc(100% - 8px)); /* Change 8px to your preference */
 ```
 
-### Modify Safe-Zone Offsets
+### Adjust the Pill Spacing
 
-In the pill styles within `content.js`, adjust the position values:
+At the top of `content.js`, change these values:
 
-```css
-.pos-top-right {
-  top: 80px;    /* Distance from top */
-  right: 72px;  /* Distance from right (avoids avatar) */
-}
+```javascript
+const EDGE_PADDING = 12; // Distance from the screen edge
+const OBSTACLE_GAP = 8;  // Gap left beside other items
 ```
 
 ## Permissions

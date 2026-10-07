@@ -10,13 +10,14 @@
               opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
 }
 
-/* Hidden state - shows 8px hotzone */
+/* Hidden state - leaves an 8px hotzone. The hotzone still reacts to hover
+   at opacity 0. --hide-chatbar-hidden-opacity is set from the settings slider. */
 .hide-chatbar-active .input-area-container,
 .hide-chatbar-active [class*="input-area"]:has([contenteditable]),
 .hide-chatbar-active .bottom-container:has([contenteditable]),
 .hide-chatbar-active footer:has([contenteditable]) {
   transform: translateY(calc(100% - 8px)) !important;
-  opacity: 0.15 !important;
+  opacity: var(--hide-chatbar-hidden-opacity, 0) !important;
 }
 
 /* Wrappers nested inside an already-hidden wrapper must not shift again,
