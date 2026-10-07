@@ -1250,21 +1250,6 @@
     });
   });
 
-  // prefers-color-scheme follows Chrome's light/dark mode (and the system
-  // setting when Chrome is set to "Device"), which is what the toolbar uses.
-  function watchColorScheme() {
-    const query = window.matchMedia('(prefers-color-scheme: dark)');
-    const report = () => {
-      try {
-        chrome.runtime.sendMessage({ type: 'theme', dark: query.matches }).catch(() => {});
-      } catch (error) {
-        // The extension was reloaded or removed while this tab stayed open.
-      }
-    };
-    report();
-    query.addEventListener('change', report);
-  }
-
   async function init() {
     await loadSettings();
     applyHideState();
@@ -1272,7 +1257,6 @@
     watchInputContent();
     trackInteractions();
     watchTyping();
-    watchColorScheme();
   }
 
   if (document.readyState === 'loading') {
