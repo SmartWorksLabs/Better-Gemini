@@ -21,14 +21,13 @@ chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') {
     chrome.storage.sync.set({
       corner: 'top-left',
-      autoHide: true,
       hiddenOpacity: 0,
       typeToChat: true,
       avoidOverlap: true,
       hideDelayEnabled: false,
       hideDelayMs: 500,
       hideDelayUnit: 'ms',
-      pillStyle: 'icon',
+      pillStyle: 'label',
       firstInstalledDate: Date.now()
     });
     chrome.storage.local.set({ interactionsCount: 0 });

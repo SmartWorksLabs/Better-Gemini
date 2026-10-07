@@ -13,26 +13,25 @@
   const MAX_PLACEMENT_STEPS = 60;
 
   const SYNC_KEYS = [
-    'corner', 'autoHide', 'hiddenOpacity', 'typeToChat', 'avoidOverlap',
+    'corner', 'hiddenOpacity', 'typeToChat', 'avoidOverlap',
     'hideDelayEnabled', 'hideDelayMs', 'hideDelayUnit', 'pillStyle', 'firstInstalledDate'
   ];
-  const TOGGLE_KEYS = ['autoHide', 'typeToChat', 'avoidOverlap', 'hideDelayEnabled'];
+  const TOGGLE_KEYS = ['typeToChat', 'avoidOverlap', 'hideDelayEnabled'];
 
   const DELAY_UNITS = { ms: 1, s: 1000, min: 60000 };
   const DELAY_SLIDER_MAX_MS = 5000;
   const DELAY_MAX_MS = 60 * 60000;
-  const PILL_STYLES = ['icon', 'label', 'dot'];
+  const PILL_STYLES = ['label', 'icon'];
 
   let settings = {
     corner: 'top-left',
-    autoHide: true,
     hiddenOpacity: 0,
     typeToChat: true,
     avoidOverlap: true,
     hideDelayEnabled: false,
     hideDelayMs: 500,
     hideDelayUnit: 'ms',
-    pillStyle: 'icon',
+    pillStyle: 'label',
     interactionsCount: 0,
     firstInstalledDate: Date.now()
   };
@@ -77,10 +76,10 @@
     return Date.now() - settings.firstInstalledDate > sevenDays;
   }
 
-  // Apply hide state based on settings
+  // The bar is always auto-hidden on Gemini pages.
   function applyHideState() {
     document.body.classList.add('hide-chatbar-enabled');
-    document.body.classList.toggle('hide-chatbar-active', settings.autoHide);
+    document.body.classList.add('hide-chatbar-active');
     applyHiddenOpacity(settings.hiddenOpacity);
     applyHideDelay();
   }
@@ -133,7 +132,10 @@
   function asObstacle(el, px, py, viewport) {
     if (el === document.documentElement || el === document.body) return null;
     if (el === hostElement) return null;
-    if (el.closest(BAR_SELECTORS)) return null;
+
+    // The chat bar counts even while hidden, since it comes back on hover.
+    const bar = el.closest('.hide-chatbar-bar');
+    if (bar) return { rect: bar.getBoundingClientRect() };
 
     const style = getComputedStyle(el);
     if (style.visibility === 'hidden' || style.opacity === '0') return null;
@@ -146,8 +148,23 @@
     const containsPoint = px >= rect.left && px <= rect.right && py >= rect.top && py <= rect.bottom;
     if (!containsPoint || rect.width === 0 || rect.height === 0) return { rect: null };
 
-    if (rect.width > viewport.width * 0.5 || rect.height > viewport.height * 0.5) return null;
+    if (rect.width > viewport.width * 0.5 || rect.height > viewport.height * 0.5) return textLineAt(el, px, py);
     return { rect };
+  }
+
+  // Wide elements can still hold text, like the "Gemini can make mistakes"
+  // line under the chat bar. Returns the line of the element's own text under
+  // (px, py), if any.
+  function textLineAt(el, px, py) {
+    const range = document.createRange();
+    for (const node of el.childNodes) {
+      if (node.nodeType !== Node.TEXT_NODE || !node.textContent.trim()) continue;
+      range.selectNodeContents(node);
+      for (const line of range.getClientRects()) {
+        if (px >= line.left && px <= line.right && py >= line.top && py <= line.bottom) return { rect: line };
+      }
+    }
+    return null;
   }
 
   // Points at most SAMPLE_SPACING apart, including both ends, so small items
@@ -180,62 +197,115 @@
     return null;
   }
 
-  // Slides the pill away from the corner along one axis until it finds a free
-  // spot, without going past the middle of the screen.
-  function scanForFreeSpot(start, size, viewport, axis, towardsStart) {
-    const limit = axis === 'x' ? viewport.width : viewport.height;
-    let pos = axis === 'x' ? start.x : start.y;
+  // Open side panels, such as Gemini's chat list or its collapsed icon rail,
+  // are tall boxes against the left or right edge of the window. The pill and
+  // its menu stay in the area between them.
+  // Size changes of side panels are reported after layout but before the
+  // frame is drawn, so re-placing the pill here keeps it exactly in step
+  // while a panel slides open or shut.
+  const observedPanels = new WeakSet();
+  const panelObserver = new ResizeObserver(() => {
+    if (!menuOpen) placePill();
+  });
+
+  function observePanel(panel) {
+    if (observedPanels.has(panel)) return;
+    observedPanels.add(panel);
+    panelObserver.observe(panel);
+  }
+
+  function findMainArea(viewport) {
+    let left = 0;
+    let right = viewport.width;
+
+    for (const side of ['left', 'right']) {
+      const x = side === 'left' ? 1 : viewport.width - 2;
+      for (const fraction of [0.3, 0.5, 0.7]) {
+        const hit = document.elementsFromPoint(x, viewport.height * fraction).find((el) => el !== hostElement);
+        for (let node = hit; node && node !== document.body && node !== document.documentElement; node = node.parentElement) {
+          const rect = node.getBoundingClientRect();
+          const againstEdge = side === 'left' ? rect.left <= 1 : rect.right >= viewport.width - 1;
+          const isPanel = rect.height >= viewport.height * 0.6 && rect.width >= 40 && rect.width < viewport.width * 0.5;
+          if (!againstEdge || !isPanel) continue;
+          observePanel(node);
+          if (side === 'left') left = Math.max(left, rect.right);
+          else right = Math.min(right, rect.left);
+        }
+      }
+    }
+
+    // On very narrow windows a panel can take up most of the screen; then
+    // there's no room beside it, so use the whole window.
+    if (right - left < 200) return { left: 0, right: viewport.width };
+    return { left, right };
+  }
+
+  // Moves the pill away from the corner, straight down (or up for the bottom
+  // corners), past anything in the way, so it never spreads sideways into the
+  // conversation. Stops at the middle of the screen.
+  function stackBelowObstacles(start, size, viewport, upwards) {
+    let y = start.y;
+    // Pad vertically so the pill keeps a gap from neighbours even when their
+    // size can't be measured.
+    const pad = OBSTACLE_GAP - 1;
 
     for (let step = 0; step < MAX_PLACEMENT_STEPS; step++) {
-      const x = axis === 'x' ? pos : start.x;
-      const y = axis === 'y' ? pos : start.y;
-      // Pad along the scan direction so the pill keeps a gap from neighbours
-      // even when their size can't be measured.
-      const padX = axis === 'x' ? OBSTACLE_GAP - 1 : 0;
-      const padY = axis === 'y' ? OBSTACLE_GAP - 1 : 0;
-      const hit = findObstacle(x - padX, y - padY, size.width + padX * 2, size.height + padY * 2, viewport);
-      if (!hit) return { x, y };
+      const hit = findObstacle(start.x, y - pad, size.width, size.height + pad * 2, viewport);
+      if (!hit) return { x: start.x, y };
 
       let next;
       if (hit.rect) {
-        const farEdge = axis === 'x'
-          ? (towardsStart ? hit.rect.left : hit.rect.right)
-          : (towardsStart ? hit.rect.top : hit.rect.bottom);
-        const extent = axis === 'x' ? size.width : size.height;
-        next = towardsStart ? farEdge - OBSTACLE_GAP - extent : farEdge + OBSTACLE_GAP;
+        next = upwards ? hit.rect.top - OBSTACLE_GAP - size.height : hit.rect.bottom + OBSTACLE_GAP;
       }
-      if (next === undefined || (towardsStart ? next >= pos : next <= pos)) {
-        next = towardsStart ? pos - OBSTACLE_GAP : pos + OBSTACLE_GAP;
+      if (next === undefined || (upwards ? next >= y : next <= y)) {
+        next = upwards ? y - OBSTACLE_GAP : y + OBSTACLE_GAP;
       }
-      pos = next;
+      y = next;
 
-      const extent = axis === 'x' ? size.width : size.height;
-      const pastMiddle = towardsStart ? pos < limit / 2 : pos + extent > limit / 2;
-      if (pastMiddle || pos < EDGE_PADDING || pos + extent > limit - EDGE_PADDING) break;
+      const pastMiddle = upwards ? y < viewport.height / 2 : y + size.height > viewport.height / 2;
+      if (pastMiddle || y < EDGE_PADDING || y + size.height > viewport.height - EDGE_PADDING) break;
     }
     return null;
   }
 
-  function computePillPosition() {
-    const viewport = viewportSize();
+  function computePillPosition(viewport, area) {
     const size = { width: pillElement.offsetWidth, height: pillElement.offsetHeight };
     const right = settings.corner.endsWith('right');
     const bottom = settings.corner.startsWith('bottom');
+    const y = Math.max(0, bottom ? viewport.height - EDGE_PADDING - size.height : EDGE_PADDING);
+
+    if (!settings.avoidOverlap) {
+      return { x: Math.max(0, right ? viewport.width - EDGE_PADDING - size.width : EDGE_PADDING), y };
+    }
 
     const corner = {
-      x: right ? viewport.width - EDGE_PADDING - size.width : EDGE_PADDING,
-      y: bottom ? viewport.height - EDGE_PADDING - size.height : EDGE_PADDING
+      x: Math.max(area.left, right ? area.right - EDGE_PADDING - size.width : area.left + EDGE_PADDING),
+      y
     };
-    corner.x = Math.max(0, corner.x);
-    corner.y = Math.max(0, corner.y);
+    return stackBelowObstacles(corner, size, viewport, bottom) || corner;
+  }
 
-    if (!settings.avoidOverlap) return corner;
+  // Keeps the settings menu on screen and out of side panels, opening it
+  // towards the middle of the window.
+  function fitMenu(x, y, viewport, area) {
+    const menu = shadowRoot.querySelector('.menu');
+    const pillWidth = pillElement.offsetWidth;
+    const pillHeight = pillElement.offsetHeight;
+    const menuWidth = menu.offsetWidth;
+    const bounds = settings.avoidOverlap ? area : { left: 0, right: viewport.width };
 
-    return (
-      scanForFreeSpot(corner, size, viewport, 'x', right) ||
-      scanForFreeSpot(corner, size, viewport, 'y', bottom) ||
-      corner
-    );
+    const preferred = settings.corner.endsWith('right') ? x + pillWidth - menuWidth : x;
+    const min = bounds.left + EDGE_PADDING;
+    const max = bounds.right - EDGE_PADDING - menuWidth;
+    const menuLeft = max < min ? Math.max(EDGE_PADDING, Math.min(preferred, viewport.width - EDGE_PADDING - menuWidth)) : Math.min(max, Math.max(min, preferred));
+    menu.style.left = `${Math.round(menuLeft - x)}px`;
+    menu.style.right = 'auto';
+
+    const opensDown = settings.corner.startsWith('top');
+    const room = opensDown
+      ? viewport.height - (y + pillHeight) - OBSTACLE_GAP - EDGE_PADDING
+      : y - OBSTACLE_GAP - EDGE_PADDING;
+    menu.style.maxHeight = `${Math.max(160, Math.floor(room))}px`;
   }
 
   function placePill() {
@@ -245,30 +315,78 @@
     pillElement.classList.remove('pos-top-left', 'pos-top-right', 'pos-bottom-left', 'pos-bottom-right');
     pillElement.classList.add(`pos-${settings.corner}`);
 
-    const { x, y } = computePillPosition();
+    const viewport = viewportSize();
+    const area = findMainArea(viewport);
+    const { x, y } = computePillPosition(viewport, area);
     pillElement.style.left = `${Math.round(x)}px`;
     pillElement.style.top = `${Math.round(y)}px`;
-
-    // Keep the menu inside the screen, however small the window is.
-    const viewport = viewportSize();
-    const menu = shadowRoot.querySelector('.menu');
-    const opensDown = settings.corner.startsWith('top');
-    const room = opensDown
-      ? viewport.height - (y + pillElement.offsetHeight) - OBSTACLE_GAP - EDGE_PADDING
-      : y - OBSTACLE_GAP - EDGE_PADDING;
-    menu.style.maxHeight = `${Math.max(160, Math.floor(room))}px`;
-
-    if (!pillElement.classList.contains('placed')) {
-      // Skip the slide animation on the very first placement.
-      pillElement.classList.add('placed');
-      requestAnimationFrame(() => pillElement.classList.add('animate'));
-    }
+    fitMenu(x, y, viewport, area);
+    pillElement.classList.add('placed');
   }
 
   function schedulePlacement() {
     if (placementScheduled) return;
     placementScheduled = true;
     requestAnimationFrame(placePill);
+  }
+
+  // While a side panel slides open or shut, re-place the pill on every frame
+  // so it moves along with the layout instead of catching up afterwards.
+  let followUntil = 0;
+  let following = false;
+
+  function followLayout(duration = 700) {
+    followUntil = Math.max(followUntil, performance.now() + duration);
+    if (following) return;
+    following = true;
+    const step = () => {
+      placePill();
+      if (performance.now() < followUntil) {
+        requestAnimationFrame(step);
+      } else {
+        following = false;
+      }
+    };
+    requestAnimationFrame(step);
+  }
+
+  // Layout animations of big pieces of the page (side panels opening, the
+  // window rearranging) mean the pill may need to move.
+  function isLayoutAnimation(e) {
+    const target = e.target;
+    if (!(target instanceof Element) || target === hostElement || target.closest(BAR_SELECTORS)) return false;
+    const rect = target.getBoundingClientRect();
+    const viewport = viewportSize();
+    return rect.height >= viewport.height * 0.3 || rect.width >= viewport.width * 0.3;
+  }
+
+  function watchLayoutChanges() {
+    window.addEventListener('resize', () => followLayout(300));
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', () => followLayout(300));
+
+    // Clicks open and close panels; follow for a moment afterwards.
+    document.addEventListener('click', () => followLayout(), true);
+    document.addEventListener('keyup', () => followLayout(), true);
+
+    for (const type of ['transitionrun', 'transitionend', 'animationstart', 'animationend']) {
+      document.addEventListener(type, (e) => {
+        if (isLayoutAnimation(e)) followLayout(type.endsWith('end') ? 100 : 700);
+      }, true);
+    }
+
+    // Catch anything else that moves items around (other extensions adding
+    // widgets, Gemini re-rendering), at most a few times a second.
+    let lastMutation = 0;
+    new MutationObserver(() => {
+      const now = performance.now();
+      if (now - lastMutation < 150) return;
+      lastMutation = now;
+      schedulePlacement();
+    }).observe(document.body, { childList: true, subtree: true });
+
+    setInterval(() => {
+      if (!document.hidden) schedulePlacement();
+    }, 1000);
   }
 
   function setMenuOpen(open) {
@@ -346,11 +464,6 @@
         visibility: visible;
       }
 
-      .pill-container.animate {
-        transition: left 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-                    top 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-      }
-
       .pill-button {
         position: relative;
         display: flex;
@@ -409,52 +522,6 @@
 
       .style-label .pill-label {
         display: inline;
-      }
-
-      /* Dot: a small dot that turns into the icon on hover. The button keeps
-         its full size so it stays easy to hit. */
-      .style-dot .pill-button {
-        width: 36px;
-        height: 36px;
-        padding: 0;
-        background: transparent;
-        box-shadow: none;
-      }
-
-      .style-dot .pill-button::before {
-        content: '';
-        position: absolute;
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        background: var(--outline);
-        opacity: 0.7;
-        transition: opacity 0.15s ease, transform 0.15s ease;
-      }
-
-      .style-dot .pill-icon {
-        opacity: 0;
-        transition: opacity 0.15s ease;
-      }
-
-      .style-dot .pill-button:hover,
-      .style-dot .pill-button:focus-visible,
-      .style-dot.menu-open .pill-button {
-        background: var(--pill-bg);
-        box-shadow: 0 1px 2px var(--shadow-soft), 0 2px 6px var(--shadow-soft);
-      }
-
-      .style-dot .pill-button:hover::before,
-      .style-dot .pill-button:focus-visible::before,
-      .style-dot.menu-open .pill-button::before {
-        opacity: 0;
-        transform: scale(0.4);
-      }
-
-      .style-dot .pill-button:hover .pill-icon,
-      .style-dot .pill-button:focus-visible .pill-icon,
-      .style-dot.menu-open .pill-icon {
-        opacity: 1;
       }
 
       .menu {
@@ -650,10 +717,6 @@
         padding: 8px 16px 12px;
       }
 
-      .choice-grid.three {
-        grid-template-columns: repeat(3, 1fr);
-      }
-
       .choice-btn {
         display: flex;
         align-items: center;
@@ -731,7 +794,7 @@
   function createPillHTML() {
     const reviewUrl = `https://chromewebstore.google.com/detail/${chrome.runtime.id}/reviews`;
     const delayUnit = DELAY_UNITS[settings.hideDelayUnit] ? settings.hideDelayUnit : 'ms';
-    const pillStyle = PILL_STYLES.includes(settings.pillStyle) ? settings.pillStyle : 'icon';
+    const pillStyle = PILL_STYLES.includes(settings.pillStyle) ? settings.pillStyle : 'label';
     return `
       <div class="pill-container pos-${settings.corner} style-${pillStyle}">
         <button class="pill-button" aria-label="Hide Chat Bar settings" title="Hide Chat Bar settings" aria-haspopup="true">
@@ -740,7 +803,6 @@
         </button>
         <div class="menu">
           <div class="menu-header">Settings</div>
-          ${toggleRowHTML('autoHide', 'Auto-Hide')}
           ${toggleRowHTML('typeToChat', 'Type anywhere to chat', 'Start typing to open the chat bar')}
           <div class="slider-row">
             <div class="slider-heading">
@@ -776,10 +838,9 @@
           ${toggleRowHTML('avoidOverlap', 'Make room for other items', 'Turn off to always sit in the exact corner')}
           <div class="divider"></div>
           <div class="menu-header">Button style</div>
-          <div class="choice-grid three style-selector">
-            ${choiceButtonHTML('style', 'icon', 'Icon', pillStyle)}
+          <div class="choice-grid style-selector">
             ${choiceButtonHTML('style', 'label', 'Icon + text', pillStyle)}
-            ${choiceButtonHTML('style', 'dot', 'Dot', pillStyle)}
+            ${choiceButtonHTML('style', 'icon', 'Icon only', pillStyle)}
           </div>
           <div class="review-prompt" style="display: none;">
             <div class="divider"></div>
@@ -833,13 +894,12 @@
 
   function applyPillStyle() {
     PILL_STYLES.forEach((style) => pillElement.classList.remove(`style-${style}`));
-    const style = PILL_STYLES.includes(settings.pillStyle) ? settings.pillStyle : 'icon';
+    const style = PILL_STYLES.includes(settings.pillStyle) ? settings.pillStyle : 'label';
     pillElement.classList.add(`style-${style}`);
   }
 
   // Applies a setting change on this page (from the menu or another tab).
   function applySetting(key) {
-    if (key === 'autoHide') applyHideState();
     if (key === 'hiddenOpacity') {
       applyHiddenOpacity(settings.hiddenOpacity);
       syncSliderUI();
@@ -851,9 +911,7 @@
     }
     if (key === 'corner') {
       syncChoiceUI();
-      pillElement.classList.remove('animate');
       placePillNow();
-      requestAnimationFrame(() => pillElement.classList.add('animate'));
     }
     if (key === 'pillStyle') {
       applyPillStyle();
@@ -1012,13 +1070,7 @@
     document.body.appendChild(hostElement);
     placePill();
 
-    // Re-check the spot when the window changes size and every couple of
-    // seconds, since Gemini and other extensions add and move items.
-    window.addEventListener('resize', schedulePlacement);
-    if (window.visualViewport) window.visualViewport.addEventListener('resize', schedulePlacement);
-    setInterval(() => {
-      if (!document.hidden) schedulePlacement();
-    }, 2000);
+    watchLayoutChanges();
   }
 
   // ---------------------------------------------------------------------------
@@ -1174,7 +1226,7 @@
   // the document level instead of binding to elements that may be replaced.
   function trackInteractions() {
     document.addEventListener('mouseover', (e) => {
-      if (!settings.autoHide || !document.body.classList.contains('hide-chatbar-active')) return;
+      if (!document.body.classList.contains('hide-chatbar-active')) return;
 
       const bar = e.target instanceof Element ? e.target.closest(BAR_SELECTORS) : null;
       if (!bar) return;

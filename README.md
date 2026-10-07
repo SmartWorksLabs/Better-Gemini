@@ -4,15 +4,15 @@ A Manifest V3 Chrome Extension that natively hides and reveals the Gemini chat i
 
 ## Features
 
-- **Auto-Hide**: The chat input bar fades out in place, and the conversation uses its space, running down to just above the "Gemini is AI and can make mistakes" line. It is fully invisible by default
+- **Always Hidden**: The chat input bar fades out in place, and the conversation uses its space, running down to just above the "Gemini is AI and can make mistakes" line. It is fully invisible by default
 - **Adjustable Visibility**: A slider sets how visible the hidden bar is, from 0% to 100%
 - **Smart Reveal**: Bar appears the moment you hover or focus it, and hides as soon as you move away
 - **Optional Hide Delay**: Keep the bar visible for a while after the mouse leaves, set with a slider or a custom amount in ms, seconds or minutes (off by default)
 - **Type Anywhere to Chat**: Start typing anywhere on the page and the bar opens with your text already in it
 - **Content Protection**: Bar stays visible when you're typing
 - **Material 3 Design**: Matches Gemini's native styling using its CSS variables
-- **Corner Pill That Makes Room**: The settings pill sits 12px from the chosen corner, adapts to the window size, and moves aside for Gemini's buttons and other extensions' widgets (can be turned off)
-- **Pill Styles and Themes**: Choose a round icon button (default), icon with text, or a small dot. It follows Gemini's light or dark theme
+- **Corner Pill That Makes Room**: The settings pill sits 12px from the chosen corner of the conversation area, stays out of open sidebars, and moves beneath (or above, in the bottom corners) Gemini's buttons, text and other extensions' widgets (can be turned off)
+- **Pill Styles and Themes**: Choose icon with text (default) or a round icon button. It follows Gemini's light or dark theme
 - **Shadow DOM Isolation**: UI won't break from Gemini's CSS updates
 - **Instant Reactivity**: Settings changes apply immediately without page reload
 - **Light and Dark Toolbar Icons**: The toolbar icon switches to match Chrome's light or dark mode
@@ -81,9 +81,10 @@ Because the bar never moves, it reacts to the mouse over its whole normal area, 
 
 A floating pill widget is injected using a **closed Shadow DOM** for style isolation. It:
 - Uses Gemini's native CSS variables for colors
-- Sits 12px from the chosen corner and re-checks its spot when the window is resized and every 2 seconds
-- With **Make room for other items** on (the default), it slides along the edge, away from the corner, until it finds a free spot with an 8px gap. Big layout areas such as side rails and top bars don't count as being in the way, and neither does scrolling chat content. If there's no free spot before the middle of the screen, it tries going down (or up) instead, then falls back to the exact corner
-- Opens a settings menu on click, sized to fit the window
+- Sits 12px from the chosen corner of the conversation area. Open side panels, like Gemini's chat list or its icon rail, are tall boxes against the left or right edge of the window, and the pill stays between them
+- Moves in step with a side panel while it slides open or shut, because it re-checks its spot whenever a panel changes size. It also re-checks after clicks, key presses, page animations, window resizes and every second
+- With **Make room for other items** on (the default), it moves straight down from a top corner (or up from a bottom corner) past anything in the way, keeping an 8px gap, so it never spreads sideways into the conversation. Buttons, other extensions' widgets, the chat bar (even while hidden) and lines of text all count. Big layout areas such as side rails and top bars don't, and neither does scrolling chat content. If there's no free spot before the middle of the screen, it falls back to the corner
+- Opens a settings menu on click, sized to fit the window and kept inside the conversation area
 - Shows the Material Symbols [`zoom_out_map`](https://fonts.google.com/icons?selected=Material+Symbols+Outlined:zoom_out_map) icon (Outlined, weight 400; Apache License 2.0). It is built in as an SVG instead of loaded from Google Fonts, because web fonts don't load inside a shadow root and this avoids a network request
 - Uses Material 3 light or dark colours to match Gemini. It reads Gemini's own theme from the `dark-theme` / `light-theme` class on `<body>`, and falls back to `prefers-color-scheme`
 
@@ -91,14 +92,13 @@ A floating pill widget is injected using a **closed Shadow DOM** for style isola
 
 User preferences are stored in `chrome.storage.sync` (synced across the user's browsers):
 - `corner`: Pill position (`'top-left'`, `'top-right'`, `'bottom-left'`, `'bottom-right'`)
-- `autoHide`: Whether auto-hide is enabled
 - `hiddenOpacity`: How visible the hidden bar is, from `0` to `100` (default `0`)
 - `typeToChat`: Whether typing anywhere opens the chat bar (default `true`)
 - `avoidOverlap`: Whether the pill moves aside for other items (default `true`)
 - `hideDelayEnabled`: Whether the bar waits before hiding (default `false`)
 - `hideDelayMs`: How long it waits, in milliseconds, up to one hour (default `500`)
 - `hideDelayUnit`: The unit shown in the custom field: `'ms'`, `'s'` or `'min'` (default `'ms'`)
-- `pillStyle`: `'icon'`, `'label'` (icon + text) or `'dot'` (default `'icon'`)
+- `pillStyle`: `'label'` (icon + text) or `'icon'` (default `'label'`)
 - `firstInstalledDate`: Timestamp of first install
 
 The reveal counter is stored in `chrome.storage.local`, because it changes often and `sync` storage has strict write limits:
