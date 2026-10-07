@@ -6,11 +6,13 @@ A Manifest V3 Chrome Extension that natively hides and reveals the Gemini chat i
 
 - **Auto-Hide**: The chat input bar fades out in place, and the conversation uses its space, running down to just above the "Gemini is AI and can make mistakes" line. It is fully invisible by default
 - **Adjustable Visibility**: A slider sets how visible the hidden bar is, from 0% to 100%
-- **Smart Reveal**: Bar appears on hover or when focused
+- **Smart Reveal**: Bar appears the moment you hover or focus it, and hides as soon as you move away
+- **Optional Hide Delay**: Keep the bar visible for a while after the mouse leaves, set with a slider or a custom amount in ms, seconds or minutes (off by default)
 - **Type Anywhere to Chat**: Start typing anywhere on the page and the bar opens with your text already in it
 - **Content Protection**: Bar stays visible when you're typing
 - **Material 3 Design**: Matches Gemini's native styling using its CSS variables
 - **Corner Pill That Makes Room**: The settings pill sits 12px from the chosen corner, adapts to the window size, and moves aside for Gemini's buttons and other extensions' widgets (can be turned off)
+- **Pill Styles and Themes**: Choose a round icon button (default), icon with text, or a small dot. It follows Gemini's light or dark theme
 - **Shadow DOM Isolation**: UI won't break from Gemini's CSS updates
 - **Instant Reactivity**: Settings changes apply immediately without page reload
 - **Light and Dark Toolbar Icons**: The toolbar icon switches to match Chrome's light or dark mode
@@ -69,7 +71,7 @@ opacity: var(--hide-chatbar-hidden-opacity, 0); /* set by the visibility slider 
 
 The negative margin gives the bar's space back to the conversation, so the bar floats over the bottom of the chat instead of reserving a blank area. When it's revealed, a backdrop in the page colour covers the text behind it.
 
-Because the bar never moves, it reacts to the mouse over its whole normal area, and small mouse movements can't make it flicker. It also waits 0.4 seconds before fading out, so a brief slip off the bar doesn't hide it. The bar smoothly fades in on:
+Because the bar never moves, it reacts to the mouse over its whole normal area, and small mouse movements can't make it flicker. It hides as soon as the mouse leaves, unless **Delay before hiding** is turned on. That delay is stored in the `--hide-chatbar-hide-delay` CSS variable. The bar quickly fades in on:
 - **Hover**: Moving your mouse over where the bar normally sits
 - **Focus**: Clicking into the input area
 - **Content**: When there's text in the draft (prevents hiding mid-message)
@@ -82,6 +84,8 @@ A floating pill widget is injected using a **closed Shadow DOM** for style isola
 - Sits 12px from the chosen corner and re-checks its spot when the window is resized and every 2 seconds
 - With **Make room for other items** on (the default), it slides along the edge, away from the corner, until it finds a free spot with an 8px gap. Big layout areas such as side rails and top bars don't count as being in the way, and neither does scrolling chat content. If there's no free spot before the middle of the screen, it tries going down (or up) instead, then falls back to the exact corner
 - Opens a settings menu on click, sized to fit the window
+- Shows the Material Symbols [`zoom_out_map`](https://fonts.google.com/icons?selected=Material+Symbols+Outlined:zoom_out_map) icon (Outlined, weight 400; Apache License 2.0). It is built in as an SVG instead of loaded from Google Fonts, because web fonts don't load inside a shadow root and this avoids a network request
+- Uses Material 3 light or dark colours to match Gemini. It reads Gemini's own theme from the `dark-theme` / `light-theme` class on `<body>`, and falls back to `prefers-color-scheme`
 
 ### Settings Storage
 
@@ -91,6 +95,10 @@ User preferences are stored in `chrome.storage.sync` (synced across the user's b
 - `hiddenOpacity`: How visible the hidden bar is, from `0` to `100` (default `0`)
 - `typeToChat`: Whether typing anywhere opens the chat bar (default `true`)
 - `avoidOverlap`: Whether the pill moves aside for other items (default `true`)
+- `hideDelayEnabled`: Whether the bar waits before hiding (default `false`)
+- `hideDelayMs`: How long it waits, in milliseconds, up to one hour (default `500`)
+- `hideDelayUnit`: The unit shown in the custom field: `'ms'`, `'s'` or `'min'` (default `'ms'`)
+- `pillStyle`: `'icon'`, `'label'` (icon + text) or `'dot'` (default `'icon'`)
 - `firstInstalledDate`: Timestamp of first install
 
 The reveal counter is stored in `chrome.storage.local`, because it changes often and `sync` storage has strict write limits:
@@ -109,14 +117,16 @@ Chrome's manifest has no setting for theme-based icons (Firefox's `theme_icons` 
 
 Because the theme is checked from Gemini tabs, a theme change is picked up the next time a Gemini tab is open.
 
+Only the toolbar icon can switch. The `chrome://extensions` page and the Chrome Web Store always show the `icons` from `manifest.json` (the light set), and Chrome has no way for an extension to change those while it runs.
+
 ## Customization
 
 ### Adjust the Fade Timing
 
-In `content.css`, the hidden state's `transition` sets how long the bar waits before fading out (`0.4s`) and how long the fade takes (`0.3s`):
+In `content.css`, the hidden state's `transition` sets how long the fade takes (`0.15s`). The wait before fading out comes from the **Delay before hiding** setting:
 
 ```css
-transition: opacity 0.3s ease 0.4s !important;
+transition: opacity 0.15s ease var(--hide-chatbar-hide-delay, 0ms) !important;
 ```
 
 ### Adjust the Pill Spacing

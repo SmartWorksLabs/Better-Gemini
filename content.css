@@ -4,20 +4,21 @@
    with .hide-chatbar-bar, and keeps --hide-chatbar-bar-height up to date. */
 
 .hide-chatbar-enabled .hide-chatbar-bar {
-  transition: opacity 0.2s ease !important;
+  transition: opacity 0.15s ease !important;
 }
 
 /* Hidden state. The negative margin pulls the bar up over the conversation,
    so its space is given back to the chat and messages run down to just above
    the "Gemini can make mistakes" line. The bar still reacts to hover while
-   invisible. The delay stops brief mouse slips from hiding it. */
+   invisible. --hide-chatbar-hide-delay is 0ms unless the user turns on
+   "Delay before hiding". */
 .hide-chatbar-active .hide-chatbar-bar {
   position: relative !important;
   z-index: 3 !important;
   margin-top: calc(-1 * var(--hide-chatbar-bar-height, 0px)) !important;
   background-color: inherit !important;
   opacity: var(--hide-chatbar-hidden-opacity, 0) !important;
-  transition: opacity 0.3s ease 0.4s !important;
+  transition: opacity 0.15s ease var(--hide-chatbar-hide-delay, 0ms) !important;
 }
 
 /* The conversation column is wider than the bar, so a backdrop in the page
@@ -39,5 +40,5 @@
 .hide-chatbar-active .hide-chatbar-bar:focus-within,
 .hide-chatbar-active.has-content .hide-chatbar-bar {
   opacity: 1 !important;
-  transition: opacity 0.2s ease !important;
+  transition: opacity 0.15s ease !important;
 }

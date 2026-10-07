@@ -25,6 +25,10 @@ chrome.runtime.onInstalled.addListener((details) => {
       hiddenOpacity: 0,
       typeToChat: true,
       avoidOverlap: true,
+      hideDelayEnabled: false,
+      hideDelayMs: 500,
+      hideDelayUnit: 'ms',
+      pillStyle: 'icon',
       firstInstalledDate: Date.now()
     });
     chrome.storage.local.set({ interactionsCount: 0 });

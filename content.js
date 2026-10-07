@@ -12,8 +12,16 @@
   const OBSTACLE_GAP = 8;
   const MAX_PLACEMENT_STEPS = 60;
 
-  const SYNC_KEYS = ['corner', 'autoHide', 'hiddenOpacity', 'typeToChat', 'avoidOverlap', 'firstInstalledDate'];
-  const TOGGLE_KEYS = ['autoHide', 'typeToChat', 'avoidOverlap'];
+  const SYNC_KEYS = [
+    'corner', 'autoHide', 'hiddenOpacity', 'typeToChat', 'avoidOverlap',
+    'hideDelayEnabled', 'hideDelayMs', 'hideDelayUnit', 'pillStyle', 'firstInstalledDate'
+  ];
+  const TOGGLE_KEYS = ['autoHide', 'typeToChat', 'avoidOverlap', 'hideDelayEnabled'];
+
+  const DELAY_UNITS = { ms: 1, s: 1000, min: 60000 };
+  const DELAY_SLIDER_MAX_MS = 5000;
+  const DELAY_MAX_MS = 60 * 60000;
+  const PILL_STYLES = ['icon', 'label', 'dot'];
 
   let settings = {
     corner: 'top-left',
@@ -21,6 +29,10 @@
     hiddenOpacity: 0,
     typeToChat: true,
     avoidOverlap: true,
+    hideDelayEnabled: false,
+    hideDelayMs: 500,
+    hideDelayUnit: 'ms',
+    pillStyle: 'icon',
     interactionsCount: 0,
     firstInstalledDate: Date.now()
   };
@@ -70,10 +82,25 @@
     document.body.classList.add('hide-chatbar-enabled');
     document.body.classList.toggle('hide-chatbar-active', settings.autoHide);
     applyHiddenOpacity(settings.hiddenOpacity);
+    applyHideDelay();
   }
 
   function applyHiddenOpacity(percent) {
     document.documentElement.style.setProperty('--hide-chatbar-hidden-opacity', String(percent / 100));
+  }
+
+  function applyHideDelay(ms = settings.hideDelayMs) {
+    const delay = settings.hideDelayEnabled ? ms : 0;
+    document.documentElement.style.setProperty('--hide-chatbar-hide-delay', `${delay}ms`);
+  }
+
+  function clampDelayMs(ms) {
+    return Number.isFinite(ms) ? Math.min(DELAY_MAX_MS, Math.max(0, Math.round(ms))) : 0;
+  }
+
+  // Shows a delay in the chosen unit without long decimal tails.
+  function formatDelay(ms, unit) {
+    return String(Math.round((ms / DELAY_UNITS[unit]) * 1000) / 1000);
   }
 
   // ---------------------------------------------------------------------------
@@ -248,6 +275,7 @@
     menuOpen = open;
     const menu = shadowRoot && shadowRoot.querySelector('.menu');
     if (menu) menu.classList.toggle('open', open);
+    if (pillElement) pillElement.classList.toggle('menu-open', open);
     if (!open) schedulePlacement();
   }
 
@@ -267,14 +295,51 @@
         box-sizing: border-box;
       }
 
-      button, input {
+      button, input, select {
         font-family: inherit;
       }
 
+      /* Material 3 colours, matching Gemini's light and dark themes. */
       .pill-container {
+        --pill-bg: #e9eef6;
+        --pill-bg-hover: #dde3ea;
+        --menu-bg: #ffffff;
+        --on-surface: #1f1f1f;
+        --on-surface-variant: #444746;
+        --outline: #747775;
+        --outline-variant: #c4c7c5;
+        --hover: rgba(31, 31, 31, 0.08);
+        --primary: #0b57d0;
+        --on-primary: #ffffff;
+        --primary-container: #d3e3fd;
+        --on-primary-container: #041e49;
+        --field-bg: #f0f4f9;
+        --shadow-soft: rgba(0, 0, 0, 0.08);
+        --shadow-strong: rgba(0, 0, 0, 0.16);
+
         position: fixed;
         z-index: 999999;
         visibility: hidden;
+        color-scheme: light;
+      }
+
+      .pill-container.theme-dark {
+        --pill-bg: #282a2c;
+        --pill-bg-hover: #333537;
+        --menu-bg: #1e1f20;
+        --on-surface: #e3e3e3;
+        --on-surface-variant: #c4c7c5;
+        --outline: #8e918f;
+        --outline-variant: #444746;
+        --hover: rgba(227, 227, 227, 0.08);
+        --primary: #a8c7fa;
+        --on-primary: #062e6f;
+        --primary-container: #0842a0;
+        --on-primary-container: #d3e3fd;
+        --field-bg: #282a2c;
+        --shadow-soft: rgba(0, 0, 0, 0.3);
+        --shadow-strong: rgba(0, 0, 0, 0.5);
+        color-scheme: dark;
       }
 
       .pill-container.placed {
@@ -287,54 +352,121 @@
       }
 
       .pill-button {
+        position: relative;
         display: flex;
         align-items: center;
+        justify-content: center;
         gap: 6px;
-        padding: 8px 14px;
         border: none;
         border-radius: 9999px;
-        background: var(--gm-sys-color-surface-container-highest, #e3e3e3);
-        color: var(--gm-sys-color-on-surface, #1f1f1f);
+        background: var(--pill-bg);
+        color: var(--on-surface);
         font-size: 13px;
         font-weight: 500;
         white-space: nowrap;
         cursor: pointer;
-        box-shadow: 
-          0 1px 2px rgba(0, 0, 0, 0.1),
-          0 4px 8px rgba(0, 0, 0, 0.08);
-        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 0 1px 2px var(--shadow-soft), 0 2px 6px var(--shadow-soft);
+        transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
         user-select: none;
       }
 
       .pill-button:hover {
-        background: var(--gm-sys-color-surface-container-high, #d9d9d9);
-        box-shadow: 
-          0 2px 4px rgba(0, 0, 0, 0.12),
-          0 6px 12px rgba(0, 0, 0, 0.1);
-        transform: scale(1.02);
+        background: var(--pill-bg-hover);
+        box-shadow: 0 1px 3px var(--shadow-soft), 0 4px 10px var(--shadow-strong);
       }
 
       .pill-button:active {
-        transform: scale(0.98);
+        transform: scale(0.96);
+      }
+
+      .pill-button:focus-visible {
+        outline: 2px solid var(--primary);
+        outline-offset: 2px;
       }
 
       .pill-icon {
-        width: 18px;
-        height: 18px;
-        fill: currentColor;
+        width: 20px;
+        height: 20px;
+        flex-shrink: 0;
+      }
+
+      .pill-label {
+        display: none;
+      }
+
+      /* Icon: a small round button. */
+      .style-icon .pill-button {
+        width: 36px;
+        height: 36px;
+        padding: 0;
+      }
+
+      /* Icon + text */
+      .style-label .pill-button {
+        height: 36px;
+        padding: 0 14px 0 10px;
+      }
+
+      .style-label .pill-label {
+        display: inline;
+      }
+
+      /* Dot: a small dot that turns into the icon on hover. The button keeps
+         its full size so it stays easy to hit. */
+      .style-dot .pill-button {
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        background: transparent;
+        box-shadow: none;
+      }
+
+      .style-dot .pill-button::before {
+        content: '';
+        position: absolute;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--outline);
+        opacity: 0.7;
+        transition: opacity 0.15s ease, transform 0.15s ease;
+      }
+
+      .style-dot .pill-icon {
+        opacity: 0;
+        transition: opacity 0.15s ease;
+      }
+
+      .style-dot .pill-button:hover,
+      .style-dot .pill-button:focus-visible,
+      .style-dot.menu-open .pill-button {
+        background: var(--pill-bg);
+        box-shadow: 0 1px 2px var(--shadow-soft), 0 2px 6px var(--shadow-soft);
+      }
+
+      .style-dot .pill-button:hover::before,
+      .style-dot .pill-button:focus-visible::before,
+      .style-dot.menu-open .pill-button::before {
+        opacity: 0;
+        transform: scale(0.4);
+      }
+
+      .style-dot .pill-button:hover .pill-icon,
+      .style-dot .pill-button:focus-visible .pill-icon,
+      .style-dot.menu-open .pill-icon {
+        opacity: 1;
       }
 
       .menu {
         position: absolute;
-        width: 260px;
+        width: 272px;
         max-width: calc(100vw - 24px);
         overflow-y: auto;
         padding: 8px 0;
-        background: var(--gm-sys-color-surface-container-low, #f7f7f7);
+        background: var(--menu-bg);
+        color: var(--on-surface);
         border-radius: 16px;
-        box-shadow: 
-          0 2px 6px rgba(0, 0, 0, 0.15),
-          0 8px 24px rgba(0, 0, 0, 0.12);
+        box-shadow: 0 2px 6px var(--shadow-strong), 0 8px 24px var(--shadow-soft);
         opacity: 0;
         visibility: hidden;
         transform: scale(0.95) translateY(-8px);
@@ -374,7 +506,7 @@
         font-weight: 500;
         text-transform: uppercase;
         letter-spacing: 0.5px;
-        color: var(--gm-sys-color-on-surface-variant, #5f5f5f);
+        color: var(--on-surface-variant);
       }
 
       .menu-item {
@@ -388,7 +520,7 @@
       }
 
       .menu-item:hover {
-        background: var(--gm-sys-color-surface-container, #ebebeb);
+        background: var(--hover);
       }
 
       .menu-item-text {
@@ -399,19 +531,19 @@
 
       .menu-item-label {
         font-size: 14px;
-        color: var(--gm-sys-color-on-surface, #1f1f1f);
+        color: var(--on-surface);
       }
 
       .menu-item-hint {
         font-size: 11px;
-        color: var(--gm-sys-color-on-surface-variant, #5f5f5f);
+        color: var(--on-surface-variant);
       }
 
       .toggle {
         flex-shrink: 0;
         width: 36px;
         height: 20px;
-        background: var(--gm-sys-color-outline, #79747e);
+        background: var(--outline);
         border-radius: 9999px;
         position: relative;
         cursor: pointer;
@@ -419,7 +551,7 @@
       }
 
       .toggle.active {
-        background: var(--gm-sys-color-primary, #0b57d0);
+        background: var(--primary);
       }
 
       .toggle::after {
@@ -427,15 +559,16 @@
         position: absolute;
         width: 16px;
         height: 16px;
-        background: white;
+        background: var(--menu-bg);
         border-radius: 50%;
         top: 2px;
         left: 2px;
-        transition: transform 0.2s ease;
+        transition: transform 0.2s ease, background 0.2s ease;
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
       }
 
       .toggle.active::after {
+        background: var(--on-primary);
         transform: translateX(16px);
       }
 
@@ -452,50 +585,102 @@
       .slider-value {
         font-size: 13px;
         font-variant-numeric: tabular-nums;
-        color: var(--gm-sys-color-on-surface-variant, #5f5f5f);
+        color: var(--on-surface-variant);
       }
 
       .slider {
         width: 100%;
         margin: 0;
         cursor: pointer;
-        accent-color: var(--gm-sys-color-primary, #0b57d0);
+        accent-color: var(--primary);
       }
 
-      .corner-selector {
+      .delay-controls {
+        padding: 0 16px 12px;
+      }
+
+      .delay-controls[hidden] {
+        display: none;
+      }
+
+      .delay-custom {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .delay-custom label {
+        font-size: 12px;
+        color: var(--on-surface-variant);
+        margin-right: auto;
+      }
+
+      .delay-number,
+      .delay-unit {
+        height: 30px;
+        border: 1px solid var(--outline-variant);
+        border-radius: 8px;
+        background: var(--field-bg);
+        color: var(--on-surface);
+        font-size: 13px;
+      }
+
+      .delay-number {
+        width: 72px;
+        padding: 0 8px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .delay-unit {
+        padding: 0 4px;
+        cursor: pointer;
+      }
+
+      .delay-number:focus,
+      .delay-unit:focus {
+        outline: 2px solid var(--primary);
+        outline-offset: -1px;
+      }
+
+      .choice-grid {
         display: grid;
         grid-template-columns: repeat(2, 1fr);
         gap: 6px;
         padding: 8px 16px 12px;
       }
 
-      .corner-btn {
+      .choice-grid.three {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .choice-btn {
         display: flex;
         align-items: center;
         justify-content: center;
-        padding: 8px;
-        border: 2px solid var(--gm-sys-color-outline, #79747e);
+        padding: 8px 4px;
+        border: 1px solid var(--outline-variant);
         border-radius: 8px;
         background: transparent;
         cursor: pointer;
-        transition: all 0.15s ease;
+        transition: background 0.15s ease, border-color 0.15s ease;
         font-size: 11px;
-        color: var(--gm-sys-color-on-surface-variant, #5f5f5f);
+        color: var(--on-surface-variant);
       }
 
-      .corner-btn:hover {
-        background: var(--gm-sys-color-surface-container, #ebebeb);
+      .choice-btn:hover {
+        background: var(--hover);
       }
 
-      .corner-btn.active {
-        border-color: var(--gm-sys-color-primary, #0b57d0);
-        background: var(--gm-sys-color-primary-container, #d3e3fd);
-        color: var(--gm-sys-color-on-primary-container, #041e49);
+      .choice-btn.active {
+        border-color: var(--primary);
+        background: var(--primary-container);
+        color: var(--on-primary-container);
       }
 
       .divider {
         height: 1px;
-        background: var(--gm-sys-color-outline-variant, #c4c7c5);
+        background: var(--outline-variant);
         margin: 8px 16px;
       }
 
@@ -503,14 +688,14 @@
         display: block;
         padding: 12px 16px;
         font-size: 13px;
-        color: var(--gm-sys-color-primary, #0b57d0);
+        color: var(--primary);
         text-decoration: none;
         text-align: center;
         transition: background 0.15s ease;
       }
 
       .review-link:hover {
-        background: var(--gm-sys-color-surface-container, #ebebeb);
+        background: var(--hover);
       }
     `;
   }
@@ -528,16 +713,30 @@
     `;
   }
 
+  function choiceButtonHTML(group, value, label, current) {
+    return `<button class="choice-btn ${value === current ? 'active' : ''}" data-${group}="${value}">${label}</button>`;
+  }
+
+  // Material Symbols "zoom_out_map" (Outlined, weight 400, fill 0, grade 0,
+  // 24px), Apache License 2.0. Inlined rather than loaded from Google Fonts:
+  // @font-face doesn't work inside a shadow root, and this avoids a network
+  // request on every Gemini page.
+  const PILL_ICON_SVG = `
+    <svg class="pill-icon" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true">
+      <path d="M120-120v-240h80v104l124-124 56 56-124 124h104v80H120Zm480 0v-80h104L580-324l56-56 124 124v-104h80v240H600ZM324-580 200-704v104h-80v-240h240v80H256l124 124-56 56Zm312 0-56-56 124-124H600v-80h240v240h-80v-104L636-580Z"/>
+    </svg>
+  `;
+
   // Create the pill HTML
   function createPillHTML() {
     const reviewUrl = `https://chromewebstore.google.com/detail/${chrome.runtime.id}/reviews`;
+    const delayUnit = DELAY_UNITS[settings.hideDelayUnit] ? settings.hideDelayUnit : 'ms';
+    const pillStyle = PILL_STYLES.includes(settings.pillStyle) ? settings.pillStyle : 'icon';
     return `
-      <div class="pill-container pos-${settings.corner}">
-        <button class="pill-button" aria-label="Hide Chat Bar Settings" aria-haspopup="true">
-          <svg class="pill-icon" viewBox="0 0 24 24">
-            <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
-          </svg>
-          <span>Chat Bar</span>
+      <div class="pill-container pos-${settings.corner} style-${pillStyle}">
+        <button class="pill-button" aria-label="Hide Chat Bar settings" title="Hide Chat Bar settings" aria-haspopup="true">
+          ${PILL_ICON_SVG}
+          <span class="pill-label">Chat Bar</span>
         </button>
         <div class="menu">
           <div class="menu-header">Settings</div>
@@ -546,20 +745,42 @@
           <div class="slider-row">
             <div class="slider-heading">
               <label class="menu-item-label" for="hidden-opacity">Hidden bar visibility</label>
-              <span class="slider-value">${settings.hiddenOpacity}%</span>
+              <span class="slider-value opacity-value">${settings.hiddenOpacity}%</span>
             </div>
-            <input id="hidden-opacity" class="slider" type="range" min="0" max="100" step="5"
+            <input id="hidden-opacity" class="slider opacity-slider" type="range" min="0" max="100" step="5"
               value="${settings.hiddenOpacity}" aria-label="Hidden bar visibility">
+          </div>
+          ${toggleRowHTML('hideDelayEnabled', 'Delay before hiding', 'When off, the bar hides instantly')}
+          <div class="delay-controls" ${settings.hideDelayEnabled ? '' : 'hidden'}>
+            <input class="slider delay-slider" type="range" min="0" max="${DELAY_SLIDER_MAX_MS}" step="50"
+              value="${Math.min(settings.hideDelayMs, DELAY_SLIDER_MAX_MS)}" aria-label="Delay before hiding">
+            <div class="delay-custom">
+              <label for="delay-number">Custom</label>
+              <input id="delay-number" class="delay-number" type="number" min="0" step="any"
+                value="${formatDelay(settings.hideDelayMs, delayUnit)}" aria-label="Delay amount">
+              <select class="delay-unit" aria-label="Delay unit">
+                <option value="ms" ${delayUnit === 'ms' ? 'selected' : ''}>ms</option>
+                <option value="s" ${delayUnit === 's' ? 'selected' : ''}>sec</option>
+                <option value="min" ${delayUnit === 'min' ? 'selected' : ''}>min</option>
+              </select>
+            </div>
           </div>
           <div class="divider"></div>
           <div class="menu-header">Position</div>
-          <div class="corner-selector">
-            <button class="corner-btn ${settings.corner === 'top-left' ? 'active' : ''}" data-corner="top-left">↖ Top Left</button>
-            <button class="corner-btn ${settings.corner === 'top-right' ? 'active' : ''}" data-corner="top-right">↗ Top Right</button>
-            <button class="corner-btn ${settings.corner === 'bottom-left' ? 'active' : ''}" data-corner="bottom-left">↙ Bottom Left</button>
-            <button class="corner-btn ${settings.corner === 'bottom-right' ? 'active' : ''}" data-corner="bottom-right">↘ Bottom Right</button>
+          <div class="choice-grid corner-selector">
+            ${choiceButtonHTML('corner', 'top-left', '↖ Top Left', settings.corner)}
+            ${choiceButtonHTML('corner', 'top-right', '↗ Top Right', settings.corner)}
+            ${choiceButtonHTML('corner', 'bottom-left', '↙ Bottom Left', settings.corner)}
+            ${choiceButtonHTML('corner', 'bottom-right', '↘ Bottom Right', settings.corner)}
           </div>
           ${toggleRowHTML('avoidOverlap', 'Make room for other items', 'Turn off to always sit in the exact corner')}
+          <div class="divider"></div>
+          <div class="menu-header">Button style</div>
+          <div class="choice-grid three style-selector">
+            ${choiceButtonHTML('style', 'icon', 'Icon', pillStyle)}
+            ${choiceButtonHTML('style', 'label', 'Icon + text', pillStyle)}
+            ${choiceButtonHTML('style', 'dot', 'Dot', pillStyle)}
+          </div>
           <div class="review-prompt" style="display: none;">
             <div class="divider"></div>
             <a class="review-link" href="${reviewUrl}" target="_blank" rel="noopener noreferrer">
@@ -580,17 +801,40 @@
     });
   }
 
-  function syncCornerUI() {
+  function syncChoiceUI() {
     if (!shadowRoot) return;
-    shadowRoot.querySelectorAll('.corner-btn').forEach((btn) => {
+    shadowRoot.querySelectorAll('[data-corner]').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.corner === settings.corner);
+    });
+    shadowRoot.querySelectorAll('[data-style]').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.style === settings.pillStyle);
     });
   }
 
   function syncSliderUI() {
     if (!shadowRoot) return;
-    shadowRoot.querySelector('.slider').value = String(settings.hiddenOpacity);
-    shadowRoot.querySelector('.slider-value').textContent = `${settings.hiddenOpacity}%`;
+    shadowRoot.querySelector('.opacity-slider').value = String(settings.hiddenOpacity);
+    shadowRoot.querySelector('.opacity-value').textContent = `${settings.hiddenOpacity}%`;
+  }
+
+  // Shows the delay in the slider and the custom field without saving it.
+  function showDelay(ms, unit = settings.hideDelayUnit) {
+    if (!shadowRoot) return;
+    shadowRoot.querySelector('.delay-slider').value = String(Math.min(ms, DELAY_SLIDER_MAX_MS));
+    shadowRoot.querySelector('.delay-number').value = formatDelay(ms, unit);
+    shadowRoot.querySelector('.delay-unit').value = unit;
+  }
+
+  function syncDelayUI() {
+    if (!shadowRoot) return;
+    shadowRoot.querySelector('.delay-controls').hidden = !settings.hideDelayEnabled;
+    showDelay(settings.hideDelayMs);
+  }
+
+  function applyPillStyle() {
+    PILL_STYLES.forEach((style) => pillElement.classList.remove(`style-${style}`));
+    const style = PILL_STYLES.includes(settings.pillStyle) ? settings.pillStyle : 'icon';
+    pillElement.classList.add(`style-${style}`);
   }
 
   // Applies a setting change on this page (from the menu or another tab).
@@ -600,11 +844,21 @@
       applyHiddenOpacity(settings.hiddenOpacity);
       syncSliderUI();
     }
+    if (key === 'hideDelayEnabled' || key === 'hideDelayMs' || key === 'hideDelayUnit') {
+      applyHideDelay();
+      syncDelayUI();
+      if (key === 'hideDelayEnabled') placePillNow();
+    }
     if (key === 'corner') {
-      syncCornerUI();
+      syncChoiceUI();
       pillElement.classList.remove('animate');
       placePillNow();
       requestAnimationFrame(() => pillElement.classList.add('animate'));
+    }
+    if (key === 'pillStyle') {
+      applyPillStyle();
+      syncChoiceUI();
+      placePillNow();
     }
     if (key === 'avoidOverlap') placePillNow();
     if (TOGGLE_KEYS.includes(key)) syncToggleUI();
@@ -616,6 +870,26 @@
     menuOpen = false;
     placePill();
     menuOpen = wasOpen;
+  }
+
+  // Gemini has its own theme setting, which it marks on <body>. When it
+  // follows the system, the class may be missing, so fall back to the
+  // browser's colour scheme.
+  const darkSchemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+  function isGeminiDark() {
+    if (document.body.classList.contains('dark-theme')) return true;
+    if (document.body.classList.contains('light-theme')) return false;
+    return darkSchemeQuery.matches;
+  }
+
+  function applyPillTheme() {
+    if (pillElement) pillElement.classList.toggle('theme-dark', isGeminiDark());
+  }
+
+  function watchPillTheme() {
+    new MutationObserver(applyPillTheme).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    darkSchemeQuery.addEventListener('change', applyPillTheme);
   }
 
   // Initialize the pill UI
@@ -637,7 +911,7 @@
 
     pillElement = shadowRoot.querySelector('.pill-container');
     const pillButton = shadowRoot.querySelector('.pill-button');
-    const slider = shadowRoot.querySelector('.slider');
+    const slider = shadowRoot.querySelector('.opacity-slider');
     const reviewPrompt = shadowRoot.querySelector('.review-prompt');
 
     if (shouldShowReviewPrompt()) {
@@ -677,23 +951,63 @@
       });
     });
 
-    // Preview while dragging, but only save when the slider is released,
-    // to stay within chrome.storage.sync's write limits.
+    // Sliders preview while dragging, but only save when released, to stay
+    // within chrome.storage.sync's write limits.
     slider.addEventListener('input', () => {
       settings.hiddenOpacity = Number(slider.value);
       applyHiddenOpacity(settings.hiddenOpacity);
-      shadowRoot.querySelector('.slider-value').textContent = `${settings.hiddenOpacity}%`;
+      shadowRoot.querySelector('.opacity-value').textContent = `${settings.hiddenOpacity}%`;
     });
     slider.addEventListener('change', () => {
       saveSettings({ hiddenOpacity: Number(slider.value) });
     });
 
-    shadowRoot.querySelectorAll('.corner-btn').forEach((btn) => {
+    const delaySlider = shadowRoot.querySelector('.delay-slider');
+    const delayNumber = shadowRoot.querySelector('.delay-number');
+    const delayUnit = shadowRoot.querySelector('.delay-unit');
+
+    delaySlider.addEventListener('input', () => {
+      const ms = Number(delaySlider.value);
+      delayNumber.value = formatDelay(ms, settings.hideDelayUnit);
+      applyHideDelay(ms);
+    });
+    delaySlider.addEventListener('change', () => {
+      saveSettings({ hideDelayMs: Number(delaySlider.value) });
+    });
+
+    // Custom amounts can go past the slider's range, up to an hour.
+    delayNumber.addEventListener('change', () => {
+      const ms = clampDelayMs(Number(delayNumber.value) * DELAY_UNITS[settings.hideDelayUnit]);
+      saveSettings({ hideDelayMs: ms });
+      applyHideDelay();
+      showDelay(ms);
+    });
+    delayNumber.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') delayNumber.blur();
+    });
+
+    // Switching units keeps the same delay and shows it in the new unit.
+    delayUnit.addEventListener('change', () => {
+      saveSettings({ hideDelayUnit: delayUnit.value });
+      showDelay(settings.hideDelayMs);
+    });
+
+    shadowRoot.querySelectorAll('[data-corner]').forEach((btn) => {
       btn.addEventListener('click', () => {
         saveSettings({ corner: btn.dataset.corner });
         applySetting('corner');
       });
     });
+
+    shadowRoot.querySelectorAll('[data-style]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        saveSettings({ pillStyle: btn.dataset.style });
+        applySetting('pillStyle');
+      });
+    });
+
+    applyPillTheme();
+    watchPillTheme();
 
     document.body.appendChild(hostElement);
     placePill();
