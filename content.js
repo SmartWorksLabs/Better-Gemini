@@ -2,10 +2,9 @@
   'use strict';
 
   const BAR_SELECTORS = [
+    'input-container',
     '.input-area-container',
-    '[class*="input-area"]',
-    '.bottom-container',
-    'footer'
+    '[class*="input-area"]'
   ].join(', ');
 
   // Distance from the screen edge, and the gap left beside other items.
@@ -731,7 +730,12 @@
 
   function findChatEditor() {
     const editors = Array.from(document.querySelectorAll('[contenteditable="true"], textarea'));
-    return editors.find((el) => el.closest(BAR_SELECTORS)) || editors[0] || null;
+    return (
+      editors.find((el) => el.closest('input-container')) ||
+      editors.find((el) => el.closest(BAR_SELECTORS)) ||
+      editors[0] ||
+      null
+    );
   }
 
   function moveCaretToEnd(el) {
@@ -776,6 +780,51 @@
   // Content and interaction tracking
   // ---------------------------------------------------------------------------
 
+  let barElement = null;
+
+  const barResizeObserver = new ResizeObserver(() => {
+    if (barElement) {
+      document.documentElement.style.setProperty('--hide-chatbar-bar-height', `${barElement.offsetHeight}px`);
+    }
+  });
+
+  // The chat bar is Gemini's .input-area-container. If Gemini renames it,
+  // fall back to the outermost "input-area" wrapper around the text box.
+  function findBar() {
+    const editor = findChatEditor();
+    if (!editor) return null;
+
+    const known = editor.closest('.input-area-container');
+    if (known) return known;
+
+    let outermost = null;
+    for (let node = editor.parentElement; node && node !== document.body; node = node.parentElement) {
+      if (node.tagName === 'INPUT-CONTAINER') break;
+      if ((node.getAttribute('class') || '').includes('input-area')) outermost = node;
+    }
+    return outermost;
+  }
+
+  // Gemini re-renders the bar when switching chats, so this runs on every
+  // DOM change to keep the tag on the current bar.
+  function trackBar() {
+    const bar = findBar();
+    if (bar === barElement) {
+      if (bar && !bar.classList.contains('hide-chatbar-bar')) bar.classList.add('hide-chatbar-bar');
+      return;
+    }
+
+    if (barElement) {
+      barElement.classList.remove('hide-chatbar-bar');
+      barResizeObserver.unobserve(barElement);
+    }
+    barElement = bar;
+    if (bar) {
+      bar.classList.add('hide-chatbar-bar');
+      barResizeObserver.observe(bar);
+    }
+  }
+
   // Gemini streams responses into the DOM, which fires a large number of
   // mutations, so the content check is batched to once per animation frame.
   function watchInputContent() {
@@ -783,6 +832,7 @@
 
     function checkContent() {
       scheduled = false;
+      trackBar();
       const hasContent = Array.from(
         document.querySelectorAll('[contenteditable="true"]')
       ).some((el) => (el.textContent || '').trim().length > 0);

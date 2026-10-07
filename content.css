@@ -1,56 +1,43 @@
 /* Hide Chat Bar for Gemini - Content Styles */
 
-/* Target the main input container - Gemini uses various wrappers */
-.hide-chatbar-enabled .input-area-container,
-.hide-chatbar-enabled [class*="input-area"],
-.hide-chatbar-enabled .bottom-container,
-.hide-chatbar-enabled footer,
-.hide-chatbar-enabled [data-placeholder] {
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+/* content.js finds the chat bar (Gemini's .input-area-container) and tags it
+   with .hide-chatbar-bar, and keeps --hide-chatbar-bar-height up to date. */
+
+.hide-chatbar-enabled .hide-chatbar-bar {
+  transition: opacity 0.2s ease !important;
 }
 
-/* Hidden state - leaves an 8px hotzone. The hotzone still reacts to hover
-   at opacity 0. --hide-chatbar-hidden-opacity is set from the settings slider. */
-.hide-chatbar-active .input-area-container,
-.hide-chatbar-active [class*="input-area"]:has([contenteditable]),
-.hide-chatbar-active .bottom-container:has([contenteditable]),
-.hide-chatbar-active footer:has([contenteditable]) {
-  transform: translateY(calc(100% - 8px)) !important;
+/* Hidden state. The negative margin pulls the bar up over the conversation,
+   so its space is given back to the chat and messages run down to just above
+   the "Gemini can make mistakes" line. The bar still reacts to hover while
+   invisible. The delay stops brief mouse slips from hiding it. */
+.hide-chatbar-active .hide-chatbar-bar {
+  position: relative !important;
+  z-index: 3 !important;
+  margin-top: calc(-1 * var(--hide-chatbar-bar-height, 0px)) !important;
+  background-color: inherit !important;
   opacity: var(--hide-chatbar-hidden-opacity, 0) !important;
+  transition: opacity 0.3s ease 0.4s !important;
 }
 
-/* Wrappers nested inside an already-hidden wrapper must not shift again,
-   otherwise the offsets stack and the hotzone slides off-screen. */
-.hide-chatbar-active :is(.input-area-container, [class*="input-area"], .bottom-container, footer)
-  :is(.input-area-container, [class*="input-area"], .bottom-container, footer) {
-  transform: none !important;
-  opacity: 1 !important;
+/* The conversation column is wider than the bar, so a backdrop in the page
+   colour covers the text around it, fading in at the top. It fades with the
+   bar and doesn't catch the mouse. */
+.hide-chatbar-active .hide-chatbar-bar::before {
+  content: '';
+  position: absolute;
+  inset: -20px -32px -16px;
+  z-index: -1;
+  background-color: inherit;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 20px);
+  mask-image: linear-gradient(to bottom, transparent, #000 20px);
+  pointer-events: none;
 }
 
-/* Reveal on hover */
-.hide-chatbar-active .input-area-container:hover,
-.hide-chatbar-active [class*="input-area"]:has([contenteditable]):hover,
-.hide-chatbar-active .bottom-container:has([contenteditable]):hover,
-.hide-chatbar-active footer:has([contenteditable]):hover {
-  transform: translateY(0) !important;
+/* Revealed on hover, while focused, and while there's a draft. */
+.hide-chatbar-active .hide-chatbar-bar:hover,
+.hide-chatbar-active .hide-chatbar-bar:focus-within,
+.hide-chatbar-active.has-content .hide-chatbar-bar {
   opacity: 1 !important;
-}
-
-/* Reveal on focus-within */
-.hide-chatbar-active .input-area-container:focus-within,
-.hide-chatbar-active [class*="input-area"]:has([contenteditable]):focus-within,
-.hide-chatbar-active .bottom-container:has([contenteditable]):focus-within,
-.hide-chatbar-active footer:has([contenteditable]):focus-within {
-  transform: translateY(0) !important;
-  opacity: 1 !important;
-}
-
-/* Prevent hiding when there's content */
-.hide-chatbar-active.has-content .input-area-container,
-.hide-chatbar-active.has-content [class*="input-area"]:has([contenteditable]),
-.hide-chatbar-active.has-content .bottom-container:has([contenteditable]),
-.hide-chatbar-active.has-content footer:has([contenteditable]) {
-  transform: translateY(0) !important;
-  opacity: 1 !important;
+  transition: opacity 0.2s ease !important;
 }

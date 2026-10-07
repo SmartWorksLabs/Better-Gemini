@@ -4,7 +4,7 @@ A Manifest V3 Chrome Extension that natively hides and reveals the Gemini chat i
 
 ## Features
 
-- **Auto-Hide**: The chat input bar slides down, leaving only an 8px hotzone. It is fully invisible by default
+- **Auto-Hide**: The chat input bar fades out in place, and the conversation uses its space, running down to just above the "Gemini is AI and can make mistakes" line. It is fully invisible by default
 - **Adjustable Visibility**: A slider sets how visible the hidden bar is, from 0% to 100%
 - **Smart Reveal**: Bar appears on hover or when focused
 - **Type Anywhere to Chat**: Start typing anywhere on the page and the bar opens with your text already in it
@@ -55,15 +55,17 @@ python3 scripts/generate_icons.py
 
 ### Hide/Reveal Mechanism
 
-The extension uses CSS transforms (not `display: none`) to hide the input bar:
+`content.js` finds Gemini's chat bar (`.input-area-container`), tags it with `.hide-chatbar-bar`, and keeps its height in the `--hide-chatbar-bar-height` CSS variable. While hidden, the bar fades out without moving:
 
 ```css
-transform: translateY(calc(100% - 8px));
+margin-top: calc(-1 * var(--hide-chatbar-bar-height, 0px));
 opacity: var(--hide-chatbar-hidden-opacity, 0); /* set by the visibility slider */
 ```
 
-This leaves an 8px "hotzone" at the bottom. The bar smoothly reveals on:
-- **Hover**: Moving your mouse over the hotzone
+The negative margin gives the bar's space back to the conversation, so the bar floats over the bottom of the chat instead of reserving a blank area. When it's revealed, a backdrop in the page colour covers the text behind it.
+
+Because the bar never moves, it reacts to the mouse over its whole normal area, and small mouse movements can't make it flicker. It also waits 0.4 seconds before fading out, so a brief slip off the bar doesn't hide it. The bar smoothly fades in on:
+- **Hover**: Moving your mouse over where the bar normally sits
 - **Focus**: Clicking into the input area
 - **Content**: When there's text in the draft (prevents hiding mid-message)
 - **Typing**: Pressing a letter, number or symbol key while no text box is focused moves the key into the chat box. Shortcuts that use Ctrl, Cmd or Alt, the space bar, and keys pressed while a dialog or menu is open are left alone
@@ -95,12 +97,12 @@ After 7 days of use, a "Leave a Review" link appears in the settings menu. This 
 
 ## Customization
 
-### Adjust the Hotzone Size
+### Adjust the Fade Timing
 
-In `content.css`, modify the `translateY` value:
+In `content.css`, the hidden state's `transition` sets how long the bar waits before fading out (`0.4s`) and how long the fade takes (`0.3s`):
 
 ```css
-transform: translateY(calc(100% - 8px)); /* Change 8px to your preference */
+transition: opacity 0.3s ease 0.4s !important;
 ```
 
 ### Adjust the Pill Spacing
