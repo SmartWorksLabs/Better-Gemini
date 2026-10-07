@@ -42,11 +42,12 @@ python3 scripts/generate_icons.py
 ├── content.js         # Main logic, pill UI, state management
 ├── content.css        # Hide/reveal animations and states
 ├── icons/             # Extension icons
+│   ├── logo-source.png    # Full-size logo the icons are made from
 │   ├── icon16.png
 │   ├── icon48.png
 │   └── icon128.png
 ├── scripts/
-│   └── generate_icons.py  # Regenerates the icons
+│   └── generate_icons.py  # Resizes the logo into the icons
 └── README.md
 ```
 
