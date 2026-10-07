@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Hide Chat Bar for Gemini",
+  "version": "1.0.0",
+  "description": "Natively hide and reveal the Gemini chat input bar with a smooth Material 3 experience.",
+  "permissions": ["storage"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://gemini.google.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

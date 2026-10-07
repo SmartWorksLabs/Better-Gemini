@@ -1,0 +1,55 @@
+/* Hide Chat Bar for Gemini - Content Styles */
+
+/* Target the main input container - Gemini uses various wrappers */
+.hide-chatbar-enabled .input-area-container,
+.hide-chatbar-enabled [class*="input-area"],
+.hide-chatbar-enabled .bottom-container,
+.hide-chatbar-enabled footer,
+.hide-chatbar-enabled [data-placeholder] {
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+/* Hidden state - shows 8px hotzone */
+.hide-chatbar-active .input-area-container,
+.hide-chatbar-active [class*="input-area"]:has([contenteditable]),
+.hide-chatbar-active .bottom-container:has([contenteditable]),
+.hide-chatbar-active footer:has([contenteditable]) {
+  transform: translateY(calc(100% - 8px)) !important;
+  opacity: 0.15 !important;
+}
+
+/* Wrappers nested inside an already-hidden wrapper must not shift again,
+   otherwise the offsets stack and the hotzone slides off-screen. */
+.hide-chatbar-active :is(.input-area-container, [class*="input-area"], .bottom-container, footer)
+  :is(.input-area-container, [class*="input-area"], .bottom-container, footer) {
+  transform: none !important;
+  opacity: 1 !important;
+}
+
+/* Reveal on hover */
+.hide-chatbar-active .input-area-container:hover,
+.hide-chatbar-active [class*="input-area"]:has([contenteditable]):hover,
+.hide-chatbar-active .bottom-container:has([contenteditable]):hover,
+.hide-chatbar-active footer:has([contenteditable]):hover {
+  transform: translateY(0) !important;
+  opacity: 1 !important;
+}
+
+/* Reveal on focus-within */
+.hide-chatbar-active .input-area-container:focus-within,
+.hide-chatbar-active [class*="input-area"]:has([contenteditable]):focus-within,
+.hide-chatbar-active .bottom-container:has([contenteditable]):focus-within,
+.hide-chatbar-active footer:has([contenteditable]):focus-within {
+  transform: translateY(0) !important;
+  opacity: 1 !important;
+}
+
+/* Prevent hiding when there's content */
+.hide-chatbar-active.has-content .input-area-container,
+.hide-chatbar-active.has-content [class*="input-area"]:has([contenteditable]),
+.hide-chatbar-active.has-content .bottom-container:has([contenteditable]),
+.hide-chatbar-active.has-content footer:has([contenteditable]) {
+  transform: translateY(0) !important;
+  opacity: 1 !important;
+}
