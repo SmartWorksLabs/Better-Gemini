@@ -22,7 +22,15 @@ def trim_border(image):
     return image.crop(box)
 
 
+def clear_faint_pixels(image):
+    """Resizing leaves near-invisible specks around shapes; make them fully transparent."""
+    alpha = image.getchannel('A').point(lambda a: 0 if a <= 8 else a)
+    image.putalpha(alpha)
+    return image
+
+
 if __name__ == '__main__':
     logo = trim_border(Image.open(SOURCE).convert('RGBA'))
     for size in SIZES:
-        logo.resize((size, size), Image.LANCZOS).save(f'icons/icon{size}.png', 'PNG', optimize=True)
+        icon = clear_faint_pixels(logo.resize((size, size), Image.LANCZOS))
+        icon.save(f'icons/icon{size}.png', 'PNG', optimize=True)
