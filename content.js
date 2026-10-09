@@ -32,7 +32,6 @@
     hideDelayMs: 500,
     hideDelayUnit: 'ms',
     pillStyle: 'label',
-    interactionsCount: 0,
     firstInstalledDate: Date.now()
   };
 
@@ -46,13 +45,15 @@
   function loadSettings() {
     return new Promise((resolve) => {
       chrome.storage.sync.get(SYNC_KEYS, (syncResult) => {
-        chrome.storage.local.get(['interactionsCount'], (localResult) => {
-          settings = { ...settings, ...syncResult, ...localResult };
-          if (!syncResult.firstInstalledDate) {
-            chrome.storage.sync.set({ firstInstalledDate: settings.firstInstalledDate });
-          }
+        if (chrome.runtime.lastError || !syncResult) {
           resolve(settings);
-        });
+          return;
+        }
+        settings = { ...settings, ...syncResult };
+        if (!syncResult.firstInstalledDate) {
+          chrome.storage.sync.set({ firstInstalledDate: settings.firstInstalledDate });
+        }
+        resolve(settings);
       });
     });
   }
@@ -61,13 +62,6 @@
   function saveSettings(newSettings) {
     settings = { ...settings, ...newSettings };
     chrome.storage.sync.set(newSettings);
-  }
-
-  // chrome.storage.sync allows only ~120 writes per minute, so the
-  // frequently-updated counter lives in local storage instead.
-  function incrementInteractions() {
-    settings.interactionsCount++;
-    chrome.storage.local.set({ interactionsCount: settings.interactionsCount });
   }
 
   // Check if 7 days have passed since install
@@ -394,6 +388,8 @@
     const menu = shadowRoot && shadowRoot.querySelector('.menu');
     if (menu) menu.classList.toggle('open', open);
     if (pillElement) pillElement.classList.toggle('menu-open', open);
+    const button = shadowRoot && shadowRoot.querySelector('.pill-button');
+    if (button) button.setAttribute('aria-expanded', String(open));
     if (!open) schedulePlacement();
   }
 
@@ -797,11 +793,11 @@
     const pillStyle = PILL_STYLES.includes(settings.pillStyle) ? settings.pillStyle : 'label';
     return `
       <div class="pill-container pos-${settings.corner} style-${pillStyle}">
-        <button class="pill-button" aria-label="Hide Chat Bar settings" title="Hide Chat Bar settings" aria-haspopup="true">
+        <button class="pill-button" aria-label="Hide Chat Bar settings" title="Hide Chat Bar settings" aria-haspopup="true" aria-expanded="false" aria-controls="chatbar-settings">
           ${PILL_ICON_SVG}
           <span class="pill-label">Chat Bar</span>
         </button>
-        <div class="menu">
+        <div class="menu" id="chatbar-settings">
           <div class="menu-header">Settings</div>
           ${toggleRowHTML('typeToChat', 'Type anywhere to chat', 'Start typing to open the chat bar')}
           <div class="slider-row">
@@ -1094,14 +1090,43 @@
     return Array.from(overlays).some((el) => el.childElementCount > 0 && isVisible(el));
   }
 
+  // Only Gemini's composer. Another text box on the page must not keep the
+  // bar open or receive characters typed elsewhere.
   function findChatEditor() {
     const editors = Array.from(document.querySelectorAll('[contenteditable="true"], textarea'));
     return (
       editors.find((el) => el.closest('input-container')) ||
       editors.find((el) => el.closest(BAR_SELECTORS)) ||
-      editors[0] ||
       null
     );
+  }
+
+  function editorHasDraft(el) {
+    if (!el) return false;
+    const text = el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' ? el.value : el.textContent;
+    return (text || '').trim().length > 0;
+  }
+
+  // execCommand still produces the input events Gemini listens for. If it
+  // misses, insert the character directly and fire the same input event.
+  function insertIntoEditor(el, text) {
+    el.focus();
+    moveCaretToEnd(el);
+    if (document.execCommand('insertText', false, text)) return;
+
+    if (el.tagName === 'TEXTAREA') {
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? start;
+      el.setRangeText(text, start, end, 'end');
+    } else {
+      const selection = window.getSelection();
+      const range = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
+      if (!range) return;
+      range.deleteContents();
+      range.insertNode(document.createTextNode(text));
+      range.collapse(false);
+    }
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' }));
   }
 
   function moveCaretToEnd(el) {
@@ -1109,10 +1134,11 @@
       el.selectionStart = el.selectionEnd = el.value.length;
       return;
     }
+    const selection = window.getSelection();
+    if (!selection) return;
     const range = document.createRange();
     range.selectNodeContents(el);
     range.collapse(false);
-    const selection = window.getSelection();
     selection.removeAllRanges();
     selection.addRange(range);
   }
@@ -1134,16 +1160,12 @@
       if (!editor) return;
 
       e.preventDefault();
-      editor.focus();
-      moveCaretToEnd(editor);
-      // insertText fires the same input events as real typing, so Gemini
-      // enables its send button and keeps its draft in sync.
-      document.execCommand('insertText', false, e.key);
+      insertIntoEditor(editor, e.key);
     });
   }
 
   // ---------------------------------------------------------------------------
-  // Content and interaction tracking
+  // Chat bar tracking
   // ---------------------------------------------------------------------------
 
   let barElement = null;
@@ -1199,11 +1221,7 @@
     function checkContent() {
       scheduled = false;
       trackBar();
-      const hasContent = Array.from(
-        document.querySelectorAll('[contenteditable="true"]')
-      ).some((el) => (el.textContent || '').trim().length > 0);
-
-      document.body.classList.toggle('has-content', hasContent);
+      document.body.classList.toggle('has-content', editorHasDraft(findChatEditor()));
     }
 
     const observer = new MutationObserver(() => {
@@ -1220,22 +1238,6 @@
     });
 
     checkContent();
-  }
-
-  // Gemini is a single-page app that re-renders the input bar, so listen at
-  // the document level instead of binding to elements that may be replaced.
-  function trackInteractions() {
-    document.addEventListener('mouseover', (e) => {
-      if (!document.body.classList.contains('hide-chatbar-active')) return;
-
-      const bar = e.target instanceof Element ? e.target.closest(BAR_SELECTORS) : null;
-      if (!bar) return;
-
-      const from = e.relatedTarget instanceof Element ? e.relatedTarget.closest(BAR_SELECTORS) : null;
-      if (from !== bar) {
-        incrementInteractions();
-      }
-    });
   }
 
   // Listen for storage changes (instant reactivity across tabs)
@@ -1255,7 +1257,6 @@
     applyHideState();
     createPill();
     watchInputContent();
-    trackInteractions();
     watchTyping();
   }
 

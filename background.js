@@ -11,8 +11,7 @@ chrome.runtime.onInstalled.addListener((details) => {
       pillStyle: 'label',
       firstInstalledDate: Date.now()
     });
-    chrome.storage.local.set({ interactionsCount: 0 });
   }
-  // Left over from older versions, which switched the toolbar icon by theme.
-  chrome.storage.local.remove('darkTheme');
+  // Older versions stored a theme flag and an unused reveal counter.
+  chrome.storage.local.remove(['darkTheme', 'interactionsCount']);
 });

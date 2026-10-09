@@ -1,119 +1,127 @@
 # Hide Chat Bar for Gemini
 
-A Manifest V3 Chrome Extension that natively hides and reveals the Gemini chat input bar with a smooth Material 3 experience.
+Hides the Gemini chat input bar until you hover, focus, or type. A **Chat Bar** button on the page is where you change how that works. This extension is not made by Google and is not affiliated with Google.
+
+Clicking the toolbar icon explains this and offers a link to Gemini. It does not change settings. Settings are on the Gemini page.
 
 ## Features
 
-- **Always Hidden**: The chat input bar fades out in place, and the conversation uses its space, running down to just above the "Gemini is AI and can make mistakes" line. It is fully invisible by default
-- **Adjustable Visibility**: A slider sets how visible the hidden bar is, from 0% to 100%
-- **Smart Reveal**: Bar appears the moment you hover or focus it, and hides as soon as you move away
-- **Optional Hide Delay**: Keep the bar visible for a while after the mouse leaves, set with a slider or a custom amount in ms, seconds or minutes (off by default)
-- **Type Anywhere to Chat**: Start typing anywhere on the page and the bar opens with your text already in it
-- **Content Protection**: Bar stays visible when you're typing
-- **Material 3 Design**: Matches Gemini's native styling using its CSS variables
-- **Corner Pill That Makes Room**: The settings pill sits 12px from the chosen corner of the conversation area, stays out of open sidebars, and moves beneath (or above, in the bottom corners) Gemini's buttons, text and other extensions' widgets (can be turned off)
-- **Pill Styles and Themes**: Choose icon with text (default) or a round icon button. It follows Gemini's light or dark theme
-- **Shadow DOM Isolation**: UI won't break from Gemini's CSS updates
-- **Instant Reactivity**: Settings changes apply immediately without page reload
+- **Hidden until you need it**: The chat bar fades and gives its space back to the conversation, which runs down to just above the "Gemini is AI and can make mistakes" line. It is fully invisible by default
+- **Adjustable visibility**: A slider sets how visible the hidden bar is, from 0% to 100%. At 100% the bar stays visible, but it still sits over the conversation. That slider does not restore Gemini's original layout
+- **Smart reveal**: The bar appears when you hover or focus it, and hides when you move away
+- **Optional hide delay**: Keep the bar visible for a while after the pointer leaves. Set it with a slider or a custom amount in ms, seconds, or minutes. Off by default, so the bar hides immediately
+- **Type anywhere to chat**: On by default. A letter, number, or symbol typed outside a text box is placed in the chat box. Shortcuts that use Ctrl, Cmd, or Alt, and the space bar, are left alone. Turn this off from the Chat Bar button
+- **Drafts stay open**: The bar stays visible while the chat box has text
+- **Matches Gemini**: The button uses Gemini's light or dark colors
+- **Stays out of the way**: The button sits 12px from the chosen corner of the conversation, stays out of open sidebars, and moves beneath (or above, in the bottom corners) Gemini's buttons, text, and other extensions' widgets. That behavior can be turned off
+- **Button styles**: Icon with text (the default) or a round icon button
+- **Changes apply immediately**: Settings update without reloading the page
+
 ## Installation
 
-### From Source (Developer Mode)
+### From source
 
 1. Clone or download this repository
-2. Open Chrome and navigate to `chrome://extensions/`
-3. Enable **Developer mode** (toggle in top-right)
+2. Open `chrome://extensions/`
+3. Turn on **Developer mode**
 4. Click **Load unpacked**
-5. Select the extension folder
-6. Navigate to [gemini.google.com](https://gemini.google.com) to see it in action
+5. Select this folder
+6. Open [gemini.google.com](https://gemini.google.com)
 
 ### Icons
 
-The extension has one logo, `icons/hide-chat-bar-for-gemini-logo.png`. `scripts/generate_icons.py` trims its transparent border, so the logo fills the whole icon like other extensions' icons do, and resizes it into `icon16.png`, `icon32.png`, `icon48.png` and `icon128.png`. These are used in the toolbar, on the extensions page and in the Chrome Web Store.
+There is one logo, `icons/hide-chat-bar-for-gemini-logo.png`. `scripts/generate_icons.py` trims its transparent border and resizes it into `icon16.png`, `icon32.png`, `icon48.png`, and `icon128.png`. Those are the toolbar, extensions page, and Chrome Web Store icons.
 
-To change the logo, replace that file with a square image and regenerate the icons (requires [Pillow](https://pypi.org/project/Pillow/)) from the repo root:
+To change the logo, replace that file with a square image and run this from the repo root. It needs [Pillow](https://pypi.org/project/Pillow/).
 
 ```bash
 pip install Pillow
 python3 scripts/generate_icons.py
 ```
 
-## File Structure
+## File structure
 
 ```
-├── manifest.json      # Extension manifest (Manifest V3)
-├── background.js      # Service worker for lifecycle events
-├── content.js         # Main logic, pill UI, state management
-├── content.css        # Hide/reveal animations and states
-├── icons/             # Extension icons
-│   ├── hide-chat-bar-for-gemini-logo.png  # Full-size logo
-│   └── icon{16,32,48,128}.png             # Icons made from the logo
+├── manifest.json      # Name, description, and permissions
+├── background.js      # Saves default settings on install
+├── popup.html         # Toolbar icon explanation
+├── popup.css
+├── content.js         # Chat bar behavior and the on-page button
+├── content.css        # Hide and reveal styles
+├── icons/
+│   ├── hide-chat-bar-for-gemini-logo.png
+│   └── icon{16,32,48,128}.png
 ├── scripts/
-│   └── generate_icons.py  # Resizes the logo into the icons
+│   └── generate_icons.py
+├── PRIVACY.md
+├── LICENSE
 └── README.md
 ```
 
-## How It Works
+## How it works
 
-### Hide/Reveal Mechanism
-
-`content.js` finds Gemini's chat bar (`.input-area-container`), tags it with `.hide-chatbar-bar`, and keeps its height in the `--hide-chatbar-bar-height` CSS variable. While hidden, the bar fades out without moving:
+`content.js` finds Gemini's chat bar (`.input-area-container`), tags it with `.hide-chatbar-bar`, and keeps its height in `--hide-chatbar-bar-height`. While the extension is active, the bar is pulled up by that height and faded:
 
 ```css
 margin-top: calc(-1 * var(--hide-chatbar-bar-height, 0px));
-opacity: var(--hide-chatbar-hidden-opacity, 0); /* set by the visibility slider */
+opacity: var(--hide-chatbar-hidden-opacity, 0);
 ```
 
-The negative margin gives the bar's space back to the conversation, so the bar floats over the bottom of the chat instead of reserving a blank area. When it's revealed, a backdrop in the page colour covers the text behind it.
+The negative margin gives the bar's space back to the conversation, so the bar floats over the bottom of the chat. Revealing it only changes the opacity. A backdrop in the page color covers the text behind it. Because the bar does not move again on hover, small pointer movements do not make it flicker.
 
-Because the bar never moves, it reacts to the mouse over its whole normal area, and small mouse movements can't make it flicker. It hides as soon as the mouse leaves, unless **Delay before hiding** is turned on. That delay is stored in the `--hide-chatbar-hide-delay` CSS variable. The bar quickly fades in on:
-- **Hover**: Moving your mouse over where the bar normally sits
-- **Focus**: Clicking into the input area
-- **Content**: When there's text in the draft (prevents hiding mid-message)
-- **Typing**: Pressing a letter, number or symbol key while no text box is focused moves the key into the chat box. Shortcuts that use Ctrl, Cmd or Alt, the space bar, and keys pressed while a dialog or menu is open are left alone
+It fades back in on:
 
-### The Pill UI
+- **Hover**: The pointer is over the bar
+- **Focus**: The chat box is focused
+- **Draft**: The chat box has text
+- **Typing**: With type anywhere on, a letter, number, or symbol typed while no text box is focused is moved into the chat box. This only targets Gemini's composer, not another text box on the page
 
-A floating pill widget is injected using a **closed Shadow DOM** for style isolation. It:
-- Uses Gemini's native CSS variables for colors
-- Sits 12px from the chosen corner of the conversation area. Open side panels, like Gemini's chat list or its icon rail, are tall boxes against the left or right edge of the window, and the pill stays between them
-- Moves in step with a side panel while it slides open or shut, because it re-checks its spot whenever a panel changes size. It also re-checks after clicks, key presses, page animations, window resizes and every second
-- With **Make room for other items** on (the default), it moves straight down from a top corner (or up from a bottom corner) past anything in the way, keeping an 8px gap, so it never spreads sideways into the conversation. Buttons, other extensions' widgets, the chat bar (even while hidden) and lines of text all count. Big layout areas such as side rails and top bars don't, and neither does scrolling chat content. If there's no free spot before the middle of the screen, it falls back to the corner
-- Opens a settings menu on click, sized to fit the window and kept inside the conversation area
-- Shows the Material Symbols [`zoom_out_map`](https://fonts.google.com/icons?selected=Material+Symbols+Outlined:zoom_out_map) icon (Outlined, weight 400; Apache License 2.0). It is built in as an SVG instead of loaded from Google Fonts, because web fonts don't load inside a shadow root and this avoids a network request
-- Uses Material 3 light or dark colours to match Gemini. It reads Gemini's own theme from the `dark-theme` / `light-theme` class on `<body>`, and falls back to `prefers-color-scheme`
+The wait before fading out comes from **Delay before hiding**. That delay is stored in `--hide-chatbar-hide-delay`.
 
-### Settings Storage
+### The on-page button
 
-User preferences are stored in `chrome.storage.sync` (synced across the user's browsers):
-- `corner`: Pill position (`'top-left'`, `'top-right'`, `'bottom-left'`, `'bottom-right'`)
+The button is injected in a closed shadow tree so Gemini's styles do not restyle it. It:
+
+- Uses colors that match Gemini's light and dark themes. It reads the `dark-theme` / `light-theme` class on `<body>`, and falls back to the browser color scheme
+- Sits 12px from the chosen corner of the conversation. Open side panels, like the chat list or the icon rail, are tall boxes against the left or right edge, and the button stays between them
+- Moves with a side panel while it slides, and also rechecks after clicks, key presses, page animations, window resizes, and every second
+- With **Make room for other items** on (the default), moves straight down from a top corner, or up from a bottom corner, past anything in the way, keeping an 8px gap. Buttons, other extensions' widgets, the chat bar, and lines of text count. Large layout areas and scrolling chat content do not. If there is no free spot before the middle of the screen, it stays in the corner
+- Opens a settings menu that stays inside the window
+- Uses the Material Symbols [`zoom_out_map`](https://fonts.google.com/icons?selected=Material+Symbols+Outlined:zoom_out_map) icon (Outlined, weight 400; Apache License 2.0), built in as an SVG
+
+### Settings storage
+
+Preferences are stored in `chrome.storage.sync`, so Chrome can sync them across the user's own browsers:
+
+- `corner`: `'top-left'`, `'top-right'`, `'bottom-left'`, or `'bottom-right'`
 - `hiddenOpacity`: How visible the hidden bar is, from `0` to `100` (default `0`)
-- `typeToChat`: Whether typing anywhere opens the chat bar (default `true`)
-- `avoidOverlap`: Whether the pill moves aside for other items (default `true`)
+- `typeToChat`: Whether typing anywhere opens the chat box (default `true`)
+- `avoidOverlap`: Whether the button moves aside for other items (default `true`)
 - `hideDelayEnabled`: Whether the bar waits before hiding (default `false`)
 - `hideDelayMs`: How long it waits, in milliseconds, up to one hour (default `500`)
-- `hideDelayUnit`: The unit shown in the custom field: `'ms'`, `'s'` or `'min'` (default `'ms'`)
+- `hideDelayUnit`: The unit shown in the custom field: `'ms'`, `'s'`, or `'min'` (default `'ms'`)
 - `pillStyle`: `'label'` (icon + text) or `'icon'` (default `'label'`)
-- `firstInstalledDate`: Timestamp of first install
+- `firstInstalledDate`: When the extension was installed. Used only to decide when the optional review link appears
 
-The reveal counter is stored in `chrome.storage.local`, because it changes often and `sync` storage has strict write limits:
-- `interactionsCount`: Number of times the bar was revealed (for analytics/review prompts)
+Nothing is sent to the developer. See [PRIVACY.md](PRIVACY.md).
 
-### 7-Day Review Hook
+### Review link
 
-After 7 days of use, a "Leave a Review" link appears in the settings menu. This is calculated from `firstInstalledDate`. The link points to the extension's own Chrome Web Store reviews page, so it only works once the extension is published there.
+After 7 days, a "Leave a Review" link appears in the settings menu. It is calculated from `firstInstalledDate`. The link points at this extension's Chrome Web Store reviews page, so it only works after the extension is published. Leaving a review is optional, and the extension does not offer anything in return.
+
 ## Customization
 
-### Adjust the Fade Timing
+### Fade timing
 
-In `content.css`, the hidden state's `transition` sets how long the fade takes (`0.15s`). The wait before fading out comes from the **Delay before hiding** setting:
+In `content.css`, the hidden state's `transition` sets how long the fade takes (`0.15s`). The wait before fading out comes from **Delay before hiding**:
 
 ```css
 transition: opacity 0.15s ease var(--hide-chatbar-hide-delay, 0ms) !important;
 ```
 
-### Adjust the Pill Spacing
+### Button spacing
 
-At the top of `content.js`, change these values:
+At the top of `content.js`:
 
 ```javascript
 const EDGE_PADDING = 12; // Distance from the screen edge
@@ -122,16 +130,56 @@ const OBSTACLE_GAP = 8;  // Gap left beside other items
 
 ## Permissions
 
-This extension requests minimal permissions:
-- **storage**: Save user preferences
-- **Site access**: The content script only runs on `gemini.google.com`
+- **storage**: Save the user's settings in Chrome sync
+- **Site access**: The extension only runs on `gemini.google.com`
 
-## Browser Compatibility
+## Browser support
 
-- Chrome 105+ (the hide/reveal styles use the CSS `:has()` selector)
-- Edge 105+ (Chromium-based)
-- Other Chromium browsers with MV3 support
+- Chrome 105 and newer. Ignoring keys while a dialog is open uses `Element.checkVisibility()`, which Chrome added in version 105
+- Edge 105 and newer
+- Other Chromium browsers with the same extension support
+
+## Chrome Web Store listing
+
+The short description shown before someone opens the listing is the `description` field in `manifest.json`:
+
+> Hides the Gemini chat bar until you hover, focus, or type. Not affiliated with Google.
+
+Paste the rest of this into the dashboard.
+
+**Single purpose**
+
+Hides the Gemini chat input bar until the user hovers, focuses, or types, and provides on-page controls for that behavior.
+
+**Detailed description**
+
+Hide Chat Bar for Gemini hides the chat input bar on gemini.google.com until you need it. The bar fades and gives its space to the conversation. It comes back when you hover or click it, while a draft is in the box, or when you type a letter anywhere on the page.
+
+Type anywhere to chat is on by default. Turn it off from the Chat Bar button on the page. That menu also sets how visible the hidden bar is, how long the bar waits before hiding, where the button sits, and whether the button moves aside for other items.
+
+This extension is not made by Google and is not affiliated with Google. Settings stay in your browser. The privacy policy describes what is stored and what is only used on the page.
+
+**Permission justification (`storage`)**
+
+Saves the user's settings (button position, hidden-bar visibility, type anywhere to chat, hide delay, and button style) with chrome.storage.sync so they follow the user across their own Chrome browsers. Also stores the install date so an optional review link can appear after 7 days. Nothing is sent to the developer.
+
+**Site access (`gemini.google.com`)**
+
+The extension only runs on gemini.google.com, where it hides the chat bar and shows the settings button.
+
+**Privacy tab**
+
+- Privacy policy: `https://github.com/SmartWorksLabs/Hide-Chat-Bar-for-Gemini/blob/main/PRIVACY.md` once this file is on the main branch
+- Check **Website content**. On Gemini, the extension checks whether the chat box has text so the bar can stay open during a draft. The text is not stored or sent to the developer
+- Check **User activity**. When type anywhere is on, a typed character is placed into the chat box. It is not stored or sent to the developer
+- Leave personal communications, web history, location, and personally identifiable information unchecked
+- Certify the limited-use statements. The required sentence is in [PRIVACY.md](PRIVACY.md)
+
+**Still required in the dashboard, outside this repo**
+
+- At least one screenshot at 1280×800 or 640×400, with no transparency, taken on Gemini
+- The developer account registration, 2-Step Verification, and a contact email that can receive store mail
 
 ## License
 
-MIT License - Feel free to modify and distribute.
+[MIT](LICENSE)
