@@ -14,7 +14,7 @@
 
   const SYNC_KEYS = [
     'corner', 'hiddenOpacity', 'typeToChat', 'avoidOverlap',
-    'hideDelayEnabled', 'hideDelayMs', 'hideDelayUnit', 'pillStyle', 'firstInstalledDate'
+    'hideDelayEnabled', 'hideDelayMs', 'hideDelayUnit', 'pillStyle', 'revealMode', 'firstInstalledDate'
   ];
   const TOGGLE_KEYS = ['typeToChat', 'avoidOverlap', 'hideDelayEnabled'];
 
@@ -22,10 +22,12 @@
   const DELAY_SLIDER_MAX_MS = 5000;
   const DELAY_MAX_MS = 60 * 60000;
   const PILL_STYLES = ['label', 'icon'];
+  const REVEAL_MODES = ['hover', 'click'];
 
   let settings = {
     corner: 'top-left',
     hiddenOpacity: 0,
+    revealMode: 'hover',
     typeToChat: true,
     avoidOverlap: true,
     hideDelayEnabled: false,
@@ -76,6 +78,17 @@
     document.body.classList.add('hide-chatbar-active');
     applyHiddenOpacity(settings.hiddenOpacity);
     applyHideDelay();
+    applyRevealMode();
+  }
+
+  function revealMode() {
+    return REVEAL_MODES.includes(settings.revealMode) ? settings.revealMode : 'hover';
+  }
+
+  function applyRevealMode() {
+    const hover = revealMode() === 'hover';
+    document.body.classList.toggle('hide-chatbar-reveal-hover', hover);
+    if (hover) document.body.classList.remove('hide-chatbar-opened');
   }
 
   function applyHiddenOpacity(percent) {
@@ -127,7 +140,7 @@
     if (el === document.documentElement || el === document.body) return null;
     if (el === hostElement) return null;
 
-    // The chat bar counts even while hidden, since it comes back on hover.
+    // The chat bar counts even while hidden, since it can come back at any time.
     const bar = el.closest('.hide-chatbar-bar');
     if (bar) return { rect: bar.getBoundingClientRect() };
 
@@ -706,6 +719,11 @@
         outline-offset: -1px;
       }
 
+      .choice-label {
+        display: block;
+        padding: 8px 16px 0;
+      }
+
       .choice-grid {
         display: grid;
         grid-template-columns: repeat(2, 1fr);
@@ -799,6 +817,11 @@
         </button>
         <div class="menu" id="chatbar-settings">
           <div class="menu-header">Settings</div>
+          <span class="menu-item-label choice-label" id="reveal-label">Show the chat bar on</span>
+          <div class="choice-grid reveal-selector" role="group" aria-labelledby="reveal-label">
+            ${choiceButtonHTML('reveal', 'hover', 'Hover', revealMode())}
+            ${choiceButtonHTML('reveal', 'click', 'Click or tap', revealMode())}
+          </div>
           ${toggleRowHTML('typeToChat', 'Type anywhere to chat', 'Start typing to open the chat bar')}
           <div class="slider-row">
             <div class="slider-heading">
@@ -866,6 +889,9 @@
     shadowRoot.querySelectorAll('[data-style]').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.style === settings.pillStyle);
     });
+    shadowRoot.querySelectorAll('[data-reveal]').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.reveal === revealMode());
+    });
   }
 
   function syncSliderUI() {
@@ -913,6 +939,10 @@
       applyPillStyle();
       syncChoiceUI();
       placePillNow();
+    }
+    if (key === 'revealMode') {
+      applyRevealMode();
+      syncChoiceUI();
     }
     if (key === 'avoidOverlap') placePillNow();
     if (TOGGLE_KEYS.includes(key)) syncToggleUI();
@@ -1057,6 +1087,13 @@
       btn.addEventListener('click', () => {
         saveSettings({ pillStyle: btn.dataset.style });
         applySetting('pillStyle');
+      });
+    });
+
+    shadowRoot.querySelectorAll('[data-reveal]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        saveSettings({ revealMode: btn.dataset.reveal });
+        applySetting('revealMode');
       });
     });
 
@@ -1213,6 +1250,29 @@
     }
   }
 
+  // In click mode, a click or tap on the bar keeps it open until the next
+  // click elsewhere. Gemini's popups (upload menu, model picker) are drawn
+  // outside the bar, so clicks in them leave it open.
+  function watchBarClicks() {
+    document.addEventListener('pointerdown', (e) => {
+      if (revealMode() !== 'click') return;
+      const path = e.composedPath();
+      if (barElement && path.includes(barElement)) {
+        document.body.classList.add('hide-chatbar-opened');
+        const interactive = e.target instanceof Element &&
+          e.target.closest('button, a, input, textarea, select, [contenteditable="true"], [role="button"]');
+        if (!interactive) {
+          const editor = findChatEditor();
+          if (editor) requestAnimationFrame(() => editor.focus());
+        }
+        return;
+      }
+      if (hostElement && path.includes(hostElement)) return;
+      if (path.some((el) => el instanceof Element && el.matches('.cdk-overlay-container'))) return;
+      document.body.classList.remove('hide-chatbar-opened');
+    }, true);
+  }
+
   // Gemini streams responses into the DOM, which fires a large number of
   // mutations, so the content check is batched to once per animation frame.
   function watchInputContent() {
@@ -1258,6 +1318,7 @@
     createPill();
     watchInputContent();
     watchTyping();
+    watchBarClicks();
   }
 
   if (document.readyState === 'loading') {

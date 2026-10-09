@@ -3,6 +3,7 @@ chrome.runtime.onInstalled.addListener((details) => {
     chrome.storage.sync.set({
       corner: 'top-left',
       hiddenOpacity: 0,
+      revealMode: 'hover',
       typeToChat: true,
       avoidOverlap: true,
       hideDelayEnabled: false,

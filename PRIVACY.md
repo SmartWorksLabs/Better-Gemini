@@ -6,7 +6,7 @@ This policy describes how the extension handles information. It does not send th
 
 ## What the extension handles
 
-**Settings, stored in Chrome sync.** The extension saves your choices with `chrome.storage.sync`: where the button sits, how visible the hidden bar is, whether typing anywhere opens the chat box, whether the button moves aside for other items, the hide delay, the button style, and the date you installed it. The install date is only used to show an optional review link after 7 days. Chrome Sync may copy these settings to your Google account so they follow you to your other browsers. That sync is done by Chrome, not by this extension. SmartWorksLabs never receives these settings.
+**Settings, stored in Chrome sync.** The extension saves your choices with `chrome.storage.sync`: where the button sits, how visible the hidden bar is, whether the bar appears on hover or on click, whether typing anywhere opens the chat box, whether the button moves aside for other items, the hide delay, the button style, and the date you installed it. The install date is only used to show an optional review link after 7 days. Chrome Sync may copy these settings to your Google account so they follow you to your other browsers. That sync is done by Chrome, not by this extension. SmartWorksLabs never receives these settings.
 
 **Text in the Gemini chat box, used only on the page.** On gemini.google.com, the extension checks whether the chat box has any text, so the bar can stay open while you are writing. It does not read your existing conversation, it does not save the draft, and it does not send the draft anywhere.
 

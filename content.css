@@ -35,8 +35,10 @@
   pointer-events: none;
 }
 
-/* Revealed on hover, while focused, and while there's a draft. */
-.hide-chatbar-active .hide-chatbar-bar:hover,
+/* Revealed while focused and while there's a draft, plus on hover or after a
+   click on the bar, depending on the "Show the chat bar on" setting. */
+.hide-chatbar-active.hide-chatbar-reveal-hover .hide-chatbar-bar:hover,
+.hide-chatbar-active.hide-chatbar-opened .hide-chatbar-bar,
 .hide-chatbar-active .hide-chatbar-bar:focus-within,
 .hide-chatbar-active.has-content .hide-chatbar-bar {
   opacity: 1 !important;

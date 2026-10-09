@@ -1,6 +1,6 @@
 # Hide Chat Bar for Gemini
 
-Hides the Gemini chat input bar until you hover, focus, or type. A **Chat Bar** button on the page is where you change how that works. This extension is not made by Google and is not affiliated with Google.
+Hides the Gemini chat input bar until you hover, click, or type. A **Chat Bar** button on the page is where you change how that works. This extension is not made by Google and is not affiliated with Google.
 
 Clicking the toolbar icon explains this and offers a link to Gemini. It does not change settings. Settings are on the Gemini page.
 
@@ -8,7 +8,8 @@ Clicking the toolbar icon explains this and offers a link to Gemini. It does not
 
 - **Hidden until you need it**: The chat bar fades and gives its space back to the conversation, which runs down to just above the "Gemini is AI and can make mistakes" line. It is fully invisible by default
 - **Adjustable visibility**: A slider sets how visible the hidden bar is, from 0% to 100%. At 100% the bar stays visible, but it still sits over the conversation. That slider does not restore Gemini's original layout
-- **Smart reveal**: The bar appears when you hover or focus it, and hides when you move away
+- **Smart reveal**: The bar appears when you hover over it or focus it, and hides when you move away
+- **Hover or click**: Choose whether hovering shows the bar (the default) or only a click or tap does. In click mode, the bar stays open until you click somewhere else, so passing the pointer over it does nothing
 - **Optional hide delay**: Keep the bar visible for a while after the pointer leaves. Set it with a slider or a custom amount in ms, seconds, or minutes. Off by default, so the bar hides immediately
 - **Type anywhere to chat**: On by default. A letter, number, or symbol typed outside a text box is placed in the chat box. Shortcuts that use Ctrl, Cmd, or Alt, and the space bar, are left alone. Turn this off from the Chat Bar button
 - **Drafts stay open**: The bar stays visible while the chat box has text
@@ -71,7 +72,8 @@ The negative margin gives the bar's space back to the conversation, so the bar f
 
 It fades back in on:
 
-- **Hover**: The pointer is over the bar
+- **Hover**: The pointer is over the bar (when **Show the chat bar on** is set to Hover)
+- **Click**: The bar was clicked or tapped, until the next click outside it (when set to Click or tap). Clicks in Gemini's popups, like the upload menu, keep it open
 - **Focus**: The chat box is focused
 - **Draft**: The chat box has text
 - **Typing**: With type anywhere on, a letter, number, or symbol typed while no text box is focused is moved into the chat box. This only targets Gemini's composer, not another text box on the page
@@ -95,6 +97,7 @@ Preferences are stored in `chrome.storage.sync`, so Chrome can sync them across 
 
 - `corner`: `'top-left'`, `'top-right'`, `'bottom-left'`, or `'bottom-right'`
 - `hiddenOpacity`: How visible the hidden bar is, from `0` to `100` (default `0`)
+- `revealMode`: `'hover'` or `'click'`, what shows the hidden bar (default `'hover'`)
 - `typeToChat`: Whether typing anywhere opens the chat box (default `true`)
 - `avoidOverlap`: Whether the button moves aside for other items (default `true`)
 - `hideDelayEnabled`: Whether the bar waits before hiding (default `false`)
@@ -143,25 +146,25 @@ const OBSTACLE_GAP = 8;  // Gap left beside other items
 
 The short description shown before someone opens the listing is the `description` field in `manifest.json`:
 
-> Hides the Gemini chat bar until you hover, focus, or type. Not affiliated with Google.
+> Hides the Gemini chat bar until you hover, click, or type. Not affiliated with Google.
 
 Paste the rest of this into the dashboard.
 
 **Single purpose**
 
-Hides the Gemini chat input bar until the user hovers, focuses, or types, and provides on-page controls for that behavior.
+Hides the Gemini chat input bar until the user hovers, clicks, or types, and provides on-page controls for that behavior.
 
 **Detailed description**
 
 Hide Chat Bar for Gemini hides the chat input bar on gemini.google.com until you need it. The bar fades and gives its space to the conversation. It comes back when you hover or click it, while a draft is in the box, or when you type a letter anywhere on the page.
 
-Type anywhere to chat is on by default. Turn it off from the Chat Bar button on the page. That menu also sets how visible the hidden bar is, how long the bar waits before hiding, where the button sits, and whether the button moves aside for other items.
+Type anywhere to chat is on by default. Turn it off from the Chat Bar button on the page. That menu also sets whether hovering or clicking shows the bar, how visible the hidden bar is, how long the bar waits before hiding, where the button sits, and whether the button moves aside for other items.
 
 This extension is not made by Google and is not affiliated with Google. Settings stay in your browser. The privacy policy describes what is stored and what is only used on the page.
 
 **Permission justification (`storage`)**
 
-Saves the user's settings (button position, hidden-bar visibility, type anywhere to chat, hide delay, and button style) with chrome.storage.sync so they follow the user across their own Chrome browsers. Also stores the install date so an optional review link can appear after 7 days. Nothing is sent to the developer.
+Saves the user's settings (button position, hidden-bar visibility, hover or click to show, type anywhere to chat, hide delay, and button style) with chrome.storage.sync so they follow the user across their own Chrome browsers. Also stores the install date so an optional review link can appear after 7 days. Nothing is sent to the developer.
 
 **Site access (`gemini.google.com`)**
 
