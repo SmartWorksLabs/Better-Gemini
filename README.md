@@ -54,8 +54,9 @@ python3 scripts/generate_icons.py
 ├── icons/
 │   ├── hide-chat-bar-for-gemini-logo.png
 │   └── icon{16,32,48,128}.png
-├── store/
-│   └── hide-chat-bar-for-gemini-store-icon.png  # Store listing icon (uploaded in the dashboard)
+├── store/                                       # Listing images, uploaded in the dashboard
+│   ├── hide-chat-bar-for-gemini-store-icon.png  # Store icon, 128×128
+│   └── hide-chat-bar-for-gemini-screenshot-{1,2}.png  # Screenshots, 1280×800
 ├── scripts/
 │   └── generate_icons.py
 ├── PRIVACY.md
@@ -185,7 +186,7 @@ The extension only runs on gemini.google.com, where it hides the chat bar and sh
 **Still required in the dashboard, outside this repo**
 
 - The store icon: upload `store/hide-chat-bar-for-gemini-store-icon.png`
-- At least one screenshot at 1280×800 or 640×400, with no transparency, taken on Gemini
+- Screenshots: upload `store/hide-chat-bar-for-gemini-screenshot-1.png` and `-2.png` (1280×800, no transparency)
 - The developer account registration, 2-Step Verification, and a contact email that can receive store mail
 
 ## License
