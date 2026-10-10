@@ -31,7 +31,9 @@ Clicking the toolbar icon explains this and offers a link to Gemini. It does not
 
 ### Icons
 
-There is one logo, `icons/hide-chat-bar-for-gemini-logo.png`. `scripts/generate_icons.py` trims its transparent border and resizes it into `icon16.png`, `icon32.png`, `icon48.png`, and `icon128.png`. Those are the toolbar, extensions page, and Chrome Web Store icons.
+There is one logo, `icons/hide-chat-bar-for-gemini-logo.png`, with a transparent background. `scripts/generate_icons.py` trims its transparent border and resizes it into `icon16.png`, `icon32.png`, `icon48.png`, and `icon128.png`. Those are the toolbar and extensions page icons, and they stay transparent.
+
+The same script also makes `store/hide-chat-bar-for-gemini-store-icon.png`: the logo in white on a rounded blue tile, 96×96 inside a 128×128 canvas. Upload it as the **Store icon** in the developer dashboard, so the listing shows the tile while installed copies show the transparent icon. The `store/` folder is not part of the extension package.
 
 To change the logo, replace that file with a square image and run this from the repo root. It needs [Pillow](https://pypi.org/project/Pillow/).
 
@@ -52,6 +54,8 @@ python3 scripts/generate_icons.py
 ├── icons/
 │   ├── hide-chat-bar-for-gemini-logo.png
 │   └── icon{16,32,48,128}.png
+├── store/
+│   └── hide-chat-bar-for-gemini-store-icon.png  # Store listing icon (uploaded in the dashboard)
 ├── scripts/
 │   └── generate_icons.py
 ├── PRIVACY.md
@@ -180,6 +184,7 @@ The extension only runs on gemini.google.com, where it hides the chat bar and sh
 
 **Still required in the dashboard, outside this repo**
 
+- The store icon: upload `store/hide-chat-bar-for-gemini-store-icon.png`
 - At least one screenshot at 1280×800 or 640×400, with no transparency, taken on Gemini
 - The developer account registration, 2-Step Verification, and a contact email that can receive store mail
 
