@@ -1462,51 +1462,214 @@
       e.clientY >= rect.top - slop && e.clientY <= rect.bottom + 24;
   }
 
-  // The message list is the scroller just above the bar. Ancestors can be
-  // the page itself, so prefer the box that lines up with the bar.
-  function findScrollable(root, depth) {
-    if (!(root instanceof Element) || depth > 6 || root === barElement || root.contains(barElement)) return null;
-    const style = getComputedStyle(root);
-    const overflowY = style.overflowY;
-    if ((overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') &&
-        root.scrollHeight > root.clientHeight + 1) {
-      const rect = root.getBoundingClientRect();
-      if (rect.height >= 80 && rect.width >= 160) return root;
-    }
-    for (const child of root.children) {
-      const found = findScrollable(child, depth + 1);
-      if (found) return found;
-    }
+  // How far from the end still counts as "scrolled to the bottom".
+  const BOTTOM_TOLERANCE = 8;
+  // The margin slide is 150ms. Follow a little longer so the last frame lands.
+  const SCROLL_FOLLOW_MS = 240;
+
+  function nodeParent(node) {
+    if (!node) return null;
+    if (node.parentElement) return node.parentElement;
+    const root = node.getRootNode && node.getRootNode();
+    if (root instanceof ShadowRoot) return root.host;
     return null;
   }
 
+  function isChatScroller(node) {
+    if (!(node instanceof Element) || node === document.documentElement || node === document.body) return false;
+    const overflowY = getComputedStyle(node).overflowY;
+    if (overflowY !== 'auto' && overflowY !== 'scroll' && overflowY !== 'overlay') return false;
+    if (node.scrollHeight <= node.clientHeight + 1) return false;
+    const rect = node.getBoundingClientRect();
+    return rect.height >= 80 && rect.width >= 160;
+  }
+
+  function scrollGap(scroller) {
+    return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+  }
+
+  function isAtBottom(scroller) {
+    return !!scroller && scrollGap(scroller) <= BOTTOM_TOLERANCE;
+  }
+
+  // The message list is whichever scrolling box lines up with the chat bar.
+  // Gemini has used a sibling scroller, a nested one, and one inside a shadow
+  // root, so check the elements just above the bar as well as nearby layout.
   function findChatScroller() {
     if (!barElement) return null;
-    const starts = [];
-    if (barElement.previousElementSibling) starts.push(barElement.previousElementSibling);
-    const parent = barElement.parentElement;
-    if (parent && parent.previousElementSibling) starts.push(parent.previousElementSibling);
-    for (const start of starts) {
-      const found = findScrollable(start, 0);
-      if (found) return found;
+    const barRect = barElement.getBoundingClientRect();
+    const x = Math.min(window.innerWidth - 2, Math.max(2, barRect.left + Math.min(barRect.width / 2, 240)));
+    let best = null;
+    let bestScore = Infinity;
+
+    const consider = (node) => {
+      if (!isChatScroller(node)) return;
+      const rect = node.getBoundingClientRect();
+      const score = Math.abs(rect.bottom - barRect.top) + Math.abs(rect.width - barRect.width) * 0.25;
+      if (score < bestScore) {
+        best = node;
+        bestScore = score;
+      }
+    };
+
+    for (const y of [barRect.top - 28, barRect.top - 80, barRect.top + 12]) {
+      if (y < 0 || y > window.innerHeight) continue;
+      for (const el of document.elementsFromPoint(x, y)) {
+        for (let node = el; node; node = nodeParent(node)) consider(node);
+      }
     }
-    return null;
+
+    const roots = [];
+    if (barElement.previousElementSibling) roots.push(barElement.previousElementSibling);
+    const parent = barElement.parentElement;
+    if (parent) {
+      if (parent.previousElementSibling) roots.push(parent.previousElementSibling);
+      roots.push(parent);
+    }
+    const walk = (node, depth) => {
+      if (!(node instanceof Element) || depth > 8) return;
+      consider(node);
+      for (const child of node.children) walk(child, depth + 1);
+    };
+    for (const root of roots) walk(root, 0);
+    return best;
   }
 
-  // When the bar takes its space back, keep a conversation that was already
-  // at the bottom pinned there, so the last reply's buttons stay in view.
-  function pinChatToBottom() {
-    const scroller = findChatScroller();
-    if (!scroller || !barElement) return;
-    const gap = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-    if (gap > barElement.offsetHeight + 80) return;
-    const apply = () => {
-      scroller.scrollTop = scroller.scrollHeight;
+  // True only while the user is sitting at the bottom. A scroll up clears it,
+  // so showing the bar never yanks someone back down from earlier messages.
+  let bottomAnchored = false;
+  let observedScroller = null;
+  let lastScrollerHeight = 0;
+  let pinningScroller = false;
+  let followingScroll = false;
+  let scrollFollowUntil = 0;
+  let followTimer = null;
+  let lastScrollerFind = 0;
+
+  function onScrollerScroll() {
+    // The bar slide itself can nudge the scrollbar. Ignore that while we are
+    // the ones keeping the bottom in view.
+    if (pinningScroller || followingScroll || !observedScroller) return;
+    bottomAnchored = isAtBottom(observedScroller);
+  }
+
+  const scrollerResizeObserver = new ResizeObserver(() => {
+    if (!observedScroller) return;
+    const height = observedScroller.clientHeight;
+    const changed = height !== lastScrollerHeight;
+    lastScrollerHeight = height;
+    if (!changed || !bottomAnchored) return;
+    // The bar's slide changes the list height over several frames.
+    followBottom(0);
+  });
+
+  function bindScroller(scroller) {
+    if (!scroller || scroller === observedScroller) return;
+    if (observedScroller) {
+      scrollerResizeObserver.unobserve(observedScroller);
+      observedScroller.removeEventListener('scroll', onScrollerScroll);
+    }
+    observedScroller = scroller;
+    lastScrollerHeight = scroller.clientHeight;
+    bottomAnchored = isAtBottom(scroller);
+    scroller.addEventListener('scroll', onScrollerScroll, { passive: true });
+    scrollerResizeObserver.observe(scroller);
+  }
+
+  function ensureScroller() {
+    const now = performance.now();
+    if (observedScroller && observedScroller.isConnected && now - lastScrollerFind < 400) return observedScroller;
+    lastScrollerFind = now;
+    const found = findChatScroller();
+    if (found) bindScroller(found);
+    return found || (observedScroller && observedScroller.isConnected ? observedScroller : null);
+  }
+
+  // Read the anchor before a layout change. Forcing layout after the bar has
+  // already opened would see the new gap and forget that the user was at the bottom.
+  function refreshBottomAnchor() {
+    // A follow already captured "at the bottom" before the bar moved.
+    // Measuring again mid-slide would see the new gap and forget that the user was at the bottom.
+    if (followingScroll) return;
+    lastScrollerFind = 0;
+    const scroller = ensureScroller();
+    if (scroller) bottomAnchored = isAtBottom(scroller);
+  }
+
+  // Call after measuring and before the class change, so a scroll event from
+  // the slide cannot clear the anchor.
+  function armBottomFollow() {
+    refreshBottomAnchor();
+    if (bottomAnchored) followingScroll = true;
+  }
+
+  function pinScroller() {
+    const scroller = ensureScroller();
+    if (!scroller || !bottomAnchored) return;
+    if (scrollGap(scroller) <= 1) return;
+    pinningScroller = true;
+    scroller.scrollTop = scroller.scrollHeight;
+    pinningScroller = false;
+  }
+
+  function stepFollow() {
+    if (!bottomAnchored) {
+      followingScroll = false;
+      return;
+    }
+    pinScroller();
+    if (performance.now() < scrollFollowUntil) requestAnimationFrame(stepFollow);
+    else followingScroll = false;
+  }
+
+  let followTicks = [];
+
+  function clearFollowTicks() {
+    for (const id of followTicks) clearTimeout(id);
+    followTicks = [];
+  }
+
+  // delayMs covers the CSS hide delay, when the list does not resize until
+  // that wait is over. Timers cover the slide itself, including when a paint
+  // frame has not run yet.
+  function followBottom(delayMs = 0) {
+    if (!bottomAnchored) {
+      followingScroll = false;
+      return;
+    }
+    clearFollowTicks();
+    if (followTimer) {
+      clearTimeout(followTimer);
+      followTimer = null;
+    }
+    const start = () => {
+      followTimer = null;
+      if (!bottomAnchored) {
+        followingScroll = false;
+        return;
+      }
+      followingScroll = true;
+      scrollFollowUntil = performance.now() + SCROLL_FOLLOW_MS;
+      const tick = () => {
+        if (!bottomAnchored) {
+          followingScroll = false;
+          return;
+        }
+        pinScroller();
+        if (performance.now() >= scrollFollowUntil) followingScroll = false;
+      };
+      tick();
+      requestAnimationFrame(stepFollow);
+      for (const delay of [0, 50, 100, 160, 220, 320]) {
+        followTicks.push(setTimeout(tick, delay));
+      }
     };
-    requestAnimationFrame(() => {
-      apply();
-      requestAnimationFrame(apply);
-    });
+    if (delayMs > 0) followTimer = setTimeout(start, delayMs);
+    else start();
+  }
+
+  function hideFollowDelay() {
+    return settings.hideDelayEnabled ? clampDelayMs(settings.hideDelayMs) : 0;
   }
 
   let revealHoldTimer = null;
@@ -1519,8 +1682,9 @@
         revealHoldTimer = null;
       }
       if (!revealed) {
+        armBottomFollow();
         barElement.classList.add('hide-chatbar-revealed');
-        pinChatToBottom();
+        followBottom(0);
       }
       return;
     }
@@ -1531,15 +1695,18 @@
       revealHoldTimer = null;
     }
     if (immediate) {
+      armBottomFollow();
       barElement.classList.remove('hide-chatbar-revealed');
+      followBottom(hideFollowDelay());
       return;
     }
     const delay = settings.hideDelayEnabled ? clampDelayMs(settings.hideDelayMs) : 0;
     revealHoldTimer = setTimeout(() => {
       revealHoldTimer = null;
       if (!barElement) return;
+      armBottomFollow();
       barElement.classList.remove('hide-chatbar-revealed');
-      pinChatToBottom();
+      followBottom(hideFollowDelay());
     }, delay);
   }
 
@@ -1565,14 +1732,19 @@
     });
     window.addEventListener('blur', () => setHoverRevealed(false));
 
+    // Capture, and do not re-measure here. Focusing the box reveals it, and a
+    // layout read in this handler would already include that reveal.
     document.addEventListener('focusin', () => {
-      if (barElement && barElement.contains(document.activeElement)) pinChatToBottom();
-    });
+      if (!barIsDocked() || !barElement || !barElement.contains(document.activeElement)) return;
+      if (bottomAnchored) followingScroll = true;
+      followBottom(0);
+    }, true);
   }
 
   function openBarFromPointer(e) {
+    if (barIsDocked()) armBottomFollow();
     document.body.classList.add('hide-chatbar-opened');
-    pinChatToBottom();
+    if (barIsDocked()) followBottom(0);
     const interactive = e.target instanceof Element &&
       e.target.closest('button, a, input, textarea, select, [contenteditable="true"], [role="button"]');
     if (!interactive) {
@@ -1601,7 +1773,9 @@
           return;
         }
         if (overAction) return;
+        armBottomFollow();
         document.body.classList.remove('hide-chatbar-opened');
+        followBottom(hideFollowDelay());
         return;
       }
 
@@ -1622,10 +1796,12 @@
       scheduled = false;
       const barChanged = trackBar();
       scheduleDockCheck(barChanged);
+      ensureScroller();
       const hasDraft = editorHasDraft(findChatEditor());
       const hadDraft = document.body.classList.contains('has-content');
+      if (hasDraft !== hadDraft && barIsDocked()) armBottomFollow();
       document.body.classList.toggle('has-content', hasDraft);
-      if (hasDraft !== hadDraft) pinChatToBottom();
+      if (hasDraft !== hadDraft && barIsDocked()) followBottom(0);
     }
 
     const observer = new MutationObserver(() => {
