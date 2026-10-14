@@ -18,7 +18,6 @@
 
 /* Docked bar: give its space back to the conversation. Clicks pass through
    the hidden bar, so Copy, thumbs up/down, and redo stay usable.
-   --hide-chatbar-hide-delay is 0ms unless "Delay before hiding" is on.
    hide-chatbar-measuring turns these overrides off for one layout read. */
 .hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring) .hide-chatbar-bar {
   position: relative !important;
@@ -26,9 +25,10 @@
   margin-top: calc(-1 * var(--hide-chatbar-bar-height, 0px)) !important;
   background-color: inherit !important;
   pointer-events: none !important;
-  --hide-chatbar-slide-ease: cubic-bezier(0.22, 1, 0.36, 1);
-  transition: opacity 0.28s ease var(--hide-chatbar-slide-delay, var(--hide-chatbar-hide-delay, 0ms)),
-              margin-top 0.48s var(--hide-chatbar-slide-ease) var(--hide-chatbar-slide-delay, var(--hide-chatbar-hide-delay, 0ms)) !important;
+  /* Timing stays the same while the bar opens and closes. Changing it as the
+     bar opens makes the margin wait and then snap. The wait before hiding is
+     applied in content.js, before this transition starts. */
+  transition: opacity 0.28s ease, margin-top 0.48s cubic-bezier(0.22, 1, 0.36, 1) !important;
 }
 
 /* The conversation column is wider than the bar, so a backdrop in the page
@@ -56,13 +56,11 @@
 }
 
 /* A docked bar that is actually open eases back into its own space. The
-   conversation glides up with it. --hide-chatbar-slide-delay is 0 while
-   open, and the hide delay while it is closing. */
+   conversation glides up with it. Don't retune the transition here. */
 .hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring) .hide-chatbar-bar.hide-chatbar-revealed,
 .hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring).hide-chatbar-opened .hide-chatbar-bar,
 .hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring) .hide-chatbar-bar:focus-within,
 .hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring).has-content .hide-chatbar-bar {
-  --hide-chatbar-slide-delay: 0ms;
   margin-top: 0 !important;
   pointer-events: auto !important;
   opacity: 1 !important;

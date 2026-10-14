@@ -1347,7 +1347,7 @@
       document.body.classList.remove('hide-chatbar-docked');
       return;
     }
-    if (isSliding()) return;
+    if (isSliding() || marginIsGliding(bar)) return;
     // Measuring turns transitions off. Doing that mid-glide snaps the chat.
 
     // Freeze transitions so the measurement can't animate the bar.
@@ -1468,11 +1468,16 @@
   const BOTTOM_TOLERANCE = 8;
   // The margin glide is 480ms. Follow a little longer so the last frame lands.
   const SCROLL_FOLLOW_MS = 560;
-  const SLIDE_MS = 520;
+  const SLIDE_MS = 640;
   let slideUntil = 0;
 
   function markSliding(delayMs = 0) {
     slideUntil = Math.max(slideUntil, performance.now() + delayMs + SLIDE_MS);
+  }
+
+  function marginIsGliding(bar) {
+    if (!bar || !bar.getAnimations) return false;
+    return bar.getAnimations().some((anim) => anim.transitionProperty === 'margin-top' && anim.playState === 'running');
   }
 
   function isSliding() {
@@ -1554,8 +1559,6 @@
   let lastScrollerHeight = 0;
   let pinningScroller = false;
   let followingScroll = false;
-  let scrollFollowUntil = 0;
-  let followTimer = null;
   let lastScrollerFind = 0;
 
   function onScrollerScroll() {
@@ -1608,77 +1611,117 @@
     if (scroller) bottomAnchored = isAtBottom(scroller);
   }
 
+  // The list's own scroll anchoring keeps the top of the chat still while the
+  // bar's margin eases. The bottom then skips up in one go when that ease
+  // ends. Take over the scroll for the glide and move it by the same amount
+  // the margin has moved, so the chat rises with the bar.
+  let glideScroll = null;
+
+  function barMargin() {
+    if (!barElement) return 0;
+    return parseFloat(getComputedStyle(barElement).marginTop) || 0;
+  }
+
+  function releaseGlideScroll() {
+    const glide = glideScroll;
+    if (!glide) return;
+    cancelAnimationFrame(glide.frame);
+    glideScroll = null;
+    const scroller = glide.scroller;
+    if (!scroller || !scroller.isConnected) return;
+    if (glide.anchor) scroller.style.overflowAnchor = glide.anchor;
+    else scroller.style.removeProperty('overflow-anchor');
+    if (glide.behavior) scroller.style.scrollBehavior = glide.behavior;
+    else scroller.style.removeProperty('scroll-behavior');
+  }
+
+  // Call before the open or close class changes, while the list is still settled.
+  function armGlideScroll() {
+    if (!bottomAnchored || !barElement) return;
+    const scroller = ensureScroller();
+    if (!scroller) return;
+    if (glideScroll && glideScroll.scroller === scroller) {
+      glideScroll.startScroll = scroller.scrollTop;
+      glideScroll.startMargin = barMargin();
+      return;
+    }
+    if (glideScroll) releaseGlideScroll();
+    const startScroll = scroller.scrollTop;
+    const startMargin = barMargin();
+    const anchor = scroller.style.overflowAnchor;
+    const behavior = scroller.style.scrollBehavior;
+    scroller.style.setProperty('overflow-anchor', 'none');
+    scroller.style.setProperty('scroll-behavior', 'auto');
+    glideScroll = {
+      scroller,
+      startScroll,
+      startMargin,
+      anchor,
+      behavior,
+      until: 0,
+      frame: 0,
+      running: false
+    };
+  }
+
+  function stepGlideScroll() {
+    const glide = glideScroll;
+    if (!glide || !glide.scroller.isConnected || !bottomAnchored || !barElement) return;
+    const target = glide.startScroll + (barMargin() - glide.startMargin);
+    if (Math.abs(glide.scroller.scrollTop - target) < 0.5) return;
+    pinningScroller = true;
+    glide.scroller.scrollTop = target;
+    pinningScroller = false;
+  }
+
   // Call after measuring and before the class change, so a scroll event from
   // the slide cannot clear the anchor.
   function armBottomFollow() {
     refreshBottomAnchor();
-    if (bottomAnchored) followingScroll = true;
-  }
-
-  function pinScroller() {
-    const scroller = ensureScroller();
-    if (!scroller || !bottomAnchored) return;
-    if (scrollGap(scroller) <= 1) return;
-    pinningScroller = true;
-    scroller.scrollTop = scroller.scrollHeight;
-    pinningScroller = false;
-  }
-
-  function stepFollow() {
     if (!bottomAnchored) {
       followingScroll = false;
+      releaseGlideScroll();
       return;
     }
-    pinScroller();
-    if (performance.now() < scrollFollowUntil) requestAnimationFrame(stepFollow);
-    else followingScroll = false;
+    followingScroll = true;
+    armGlideScroll();
   }
 
-  let followTicks = [];
-
-  function clearFollowTicks() {
-    for (const id of followTicks) clearTimeout(id);
-    followTicks = [];
-  }
-
-  // delayMs covers the CSS hide delay, when the list does not resize until
-  // that wait is over. Timers cover the slide itself, including when a paint
-  // frame has not run yet.
+  // delayMs covers the CSS hide delay, when the margin does not move until
+  // that wait is over. The loop runs the whole time, so the list tracks the
+  // margin instead of catching up after it.
   function followBottom(delayMs = 0) {
     if (!bottomAnchored) {
       followingScroll = false;
+      releaseGlideScroll();
       return;
     }
-    clearFollowTicks();
-    if (followTimer) {
-      clearTimeout(followTimer);
-      followTimer = null;
+    followingScroll = true;
+    if (!glideScroll) armGlideScroll();
+    if (!glideScroll) {
+      followingScroll = false;
+      return;
     }
-    const start = () => {
-      followTimer = null;
+    const state = glideScroll;
+    state.until = Math.max(state.until, performance.now() + delayMs + SCROLL_FOLLOW_MS);
+    if (state.running) return;
+    state.running = true;
+    const step = () => {
+      if (glideScroll !== state) return;
       if (!bottomAnchored) {
         followingScroll = false;
+        releaseGlideScroll();
         return;
       }
-      followingScroll = true;
-      scrollFollowUntil = performance.now() + SCROLL_FOLLOW_MS;
-      const tick = () => {
-        if (!bottomAnchored) {
-          followingScroll = false;
-          return;
-        }
-        pinScroller();
-        if (performance.now() >= scrollFollowUntil) followingScroll = false;
-      };
-      // Wait a frame before the first pin, so the glide can start instead of
-      // the list jumping the whole way on the same turn the bar opens.
-      requestAnimationFrame(stepFollow);
-      for (const delay of [32, 80, 140, 220, 300, 380, 480, 560]) {
-        followTicks.push(setTimeout(tick, delay));
+      stepGlideScroll();
+      if (performance.now() < state.until) state.frame = requestAnimationFrame(step);
+      else {
+        stepGlideScroll();
+        followingScroll = false;
+        releaseGlideScroll();
       }
     };
-    if (delayMs > 0) followTimer = setTimeout(start, delayMs);
-    else start();
+    state.frame = requestAnimationFrame(step);
   }
 
   function hideFollowDelay() {
@@ -1753,7 +1796,7 @@
     document.addEventListener('focusin', () => {
       if (!barIsDocked() || !barElement || !barElement.contains(document.activeElement)) return;
       markSliding(0);
-      if (bottomAnchored) followingScroll = true;
+      armBottomFollow();
       followBottom(0);
     }, true);
   }
