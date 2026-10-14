@@ -78,7 +78,7 @@ pointer-events: none;
 
 The negative margin gives the bar's space back to the conversation, so the bar floats over the bottom of the chat. Clicks pass through that hidden bar. Copy, thumbs up/down, and redo under the last reply stay clickable, and hovering those buttons does not open the bar on top of them.
 
-When the bar is actually shown, the margin goes back to zero. The conversation shifts up and those buttons sit above the bar. If the list was already scrolled to the bottom, it stays scrolled to the bottom while the bar slides in, so the buttons remain on screen. If you had scrolled up to read earlier messages, showing the bar leaves that position alone. A backdrop in the page color covers the text behind the bar only while it is overlapping. The bar stays open while the pointer is on it or on those buttons, so the shift does not flicker.
+When the bar is actually shown, the margin eases back to zero over a short glide. The conversation moves up with it, and those buttons come to rest above the bar. If the list was already scrolled to the bottom, it stays scrolled to the bottom through the glide, so the buttons remain on screen. If you had scrolled up to read earlier messages, showing the bar leaves that position alone. A backdrop in the page color covers the text behind the bar only while it is overlapping. The bar stays open while the pointer is on it or on those buttons, so the shift does not flicker.
 
 It fades back in on:
 

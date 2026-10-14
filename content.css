@@ -26,8 +26,9 @@
   margin-top: calc(-1 * var(--hide-chatbar-bar-height, 0px)) !important;
   background-color: inherit !important;
   pointer-events: none !important;
-  transition: opacity 0.15s ease var(--hide-chatbar-hide-delay, 0ms),
-              margin-top 0.15s ease var(--hide-chatbar-hide-delay, 0ms) !important;
+  --hide-chatbar-slide-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity 0.28s ease var(--hide-chatbar-slide-delay, var(--hide-chatbar-hide-delay, 0ms)),
+              margin-top 0.48s var(--hide-chatbar-slide-ease) var(--hide-chatbar-slide-delay, var(--hide-chatbar-hide-delay, 0ms)) !important;
 }
 
 /* The conversation column is wider than the bar, so a backdrop in the page
@@ -43,26 +44,28 @@
   pointer-events: none;
 }
 
-/* Shown again: focused, a draft, hover, or a click, depending on settings. */
+/* Shown again: focused, a draft, hover, or a click, depending on settings.
+   Leave the timing alone here. Replacing it when the bar opens makes the
+   conversation jump instead of gliding. */
 .hide-chatbar-active.hide-chatbar-reveal-hover .hide-chatbar-bar:hover,
 .hide-chatbar-active.hide-chatbar-opened .hide-chatbar-bar,
 .hide-chatbar-active .hide-chatbar-bar:focus-within,
 .hide-chatbar-active.has-content .hide-chatbar-bar,
 .hide-chatbar-active .hide-chatbar-bar.hide-chatbar-revealed {
   opacity: 1 !important;
-  transition: opacity 0.15s ease, margin-top 0.15s ease !important;
 }
 
-/* A docked bar that is actually open sits back in its own space. The
-   conversation moves up, and the buttons under the last reply clear the bar. */
+/* A docked bar that is actually open eases back into its own space. The
+   conversation glides up with it. --hide-chatbar-slide-delay is 0 while
+   open, and the hide delay while it is closing. */
 .hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring) .hide-chatbar-bar.hide-chatbar-revealed,
 .hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring).hide-chatbar-opened .hide-chatbar-bar,
 .hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring) .hide-chatbar-bar:focus-within,
 .hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring).has-content .hide-chatbar-bar {
+  --hide-chatbar-slide-delay: 0ms;
   margin-top: 0 !important;
   pointer-events: auto !important;
   opacity: 1 !important;
-  transition: opacity 0.15s ease, margin-top 0.15s ease !important;
 }
 
 .hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring) .hide-chatbar-bar.hide-chatbar-revealed::before,

@@ -1347,6 +1347,8 @@
       document.body.classList.remove('hide-chatbar-docked');
       return;
     }
+    if (isSliding()) return;
+    // Measuring turns transitions off. Doing that mid-glide snaps the chat.
 
     // Freeze transitions so the measurement can't animate the bar.
     const previousTransition = bar.style.transition;
@@ -1464,8 +1466,18 @@
 
   // How far from the end still counts as "scrolled to the bottom".
   const BOTTOM_TOLERANCE = 8;
-  // The margin slide is 150ms. Follow a little longer so the last frame lands.
-  const SCROLL_FOLLOW_MS = 240;
+  // The margin glide is 480ms. Follow a little longer so the last frame lands.
+  const SCROLL_FOLLOW_MS = 560;
+  const SLIDE_MS = 520;
+  let slideUntil = 0;
+
+  function markSliding(delayMs = 0) {
+    slideUntil = Math.max(slideUntil, performance.now() + delayMs + SLIDE_MS);
+  }
+
+  function isSliding() {
+    return performance.now() < slideUntil;
+  }
 
   function nodeParent(node) {
     if (!node) return null;
@@ -1658,9 +1670,10 @@
         pinScroller();
         if (performance.now() >= scrollFollowUntil) followingScroll = false;
       };
-      tick();
+      // Wait a frame before the first pin, so the glide can start instead of
+      // the list jumping the whole way on the same turn the bar opens.
       requestAnimationFrame(stepFollow);
-      for (const delay of [0, 50, 100, 160, 220, 320]) {
+      for (const delay of [32, 80, 140, 220, 300, 380, 480, 560]) {
         followTicks.push(setTimeout(tick, delay));
       }
     };
@@ -1682,6 +1695,7 @@
         revealHoldTimer = null;
       }
       if (!revealed) {
+        markSliding(0);
         armBottomFollow();
         barElement.classList.add('hide-chatbar-revealed');
         followBottom(0);
@@ -1695,6 +1709,7 @@
       revealHoldTimer = null;
     }
     if (immediate) {
+      markSliding(hideFollowDelay());
       armBottomFollow();
       barElement.classList.remove('hide-chatbar-revealed');
       followBottom(hideFollowDelay());
@@ -1704,6 +1719,7 @@
     revealHoldTimer = setTimeout(() => {
       revealHoldTimer = null;
       if (!barElement) return;
+      markSliding(hideFollowDelay());
       armBottomFollow();
       barElement.classList.remove('hide-chatbar-revealed');
       followBottom(hideFollowDelay());
@@ -1736,13 +1752,17 @@
     // layout read in this handler would already include that reveal.
     document.addEventListener('focusin', () => {
       if (!barIsDocked() || !barElement || !barElement.contains(document.activeElement)) return;
+      markSliding(0);
       if (bottomAnchored) followingScroll = true;
       followBottom(0);
     }, true);
   }
 
   function openBarFromPointer(e) {
-    if (barIsDocked()) armBottomFollow();
+    if (barIsDocked()) {
+      markSliding(0);
+      armBottomFollow();
+    }
     document.body.classList.add('hide-chatbar-opened');
     if (barIsDocked()) followBottom(0);
     const interactive = e.target instanceof Element &&
@@ -1773,6 +1793,7 @@
           return;
         }
         if (overAction) return;
+        markSliding(hideFollowDelay());
         armBottomFollow();
         document.body.classList.remove('hide-chatbar-opened');
         followBottom(hideFollowDelay());
@@ -1799,7 +1820,10 @@
       ensureScroller();
       const hasDraft = editorHasDraft(findChatEditor());
       const hadDraft = document.body.classList.contains('has-content');
-      if (hasDraft !== hadDraft && barIsDocked()) armBottomFollow();
+      if (hasDraft !== hadDraft && barIsDocked()) {
+        markSliding(0);
+        armBottomFollow();
+      }
       document.body.classList.toggle('has-content', hasDraft);
       if (hasDraft !== hadDraft && barIsDocked()) followBottom(0);
     }
