@@ -89,6 +89,7 @@
     const hover = revealMode() === 'hover';
     document.body.classList.toggle('hide-chatbar-reveal-hover', hover);
     if (hover) document.body.classList.remove('hide-chatbar-opened');
+    else setHoverRevealed(false, true);
   }
 
   function applyHiddenOpacity(percent) {
@@ -368,8 +369,16 @@
   }
 
   function watchLayoutChanges() {
-    window.addEventListener('resize', () => followLayout(300));
-    if (window.visualViewport) window.visualViewport.addEventListener('resize', () => followLayout(300));
+    window.addEventListener('resize', () => {
+      followLayout(300);
+      scheduleDockCheck(true);
+    });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', () => {
+        followLayout(300);
+        scheduleDockCheck(true);
+      });
+    }
 
     // Clicks open and close panels; follow for a moment afterwards.
     document.addEventListener('click', () => followLayout(), true);
@@ -392,7 +401,9 @@
     }).observe(document.body, { childList: true, subtree: true });
 
     setInterval(() => {
-      if (!document.hidden) schedulePlacement();
+      if (document.hidden) return;
+      schedulePlacement();
+      scheduleDockCheck(false);
     }, 1000);
   }
 
@@ -822,7 +833,7 @@
             ${choiceButtonHTML('reveal', 'hover', 'Hover', revealMode())}
             ${choiceButtonHTML('reveal', 'click', 'Click or tap', revealMode())}
           </div>
-          ${toggleRowHTML('typeToChat', 'Type anywhere to chat', 'Start typing to open the chat bar')}
+          ${toggleRowHTML('typeToChat', 'Type anywhere to chat', 'Type or paste to open the chat bar')}
           <div class="slider-row">
             <div class="slider-heading">
               <label class="menu-item-label" for="hidden-opacity">Hidden bar visibility</label>
@@ -1180,18 +1191,68 @@
     selection.addRange(range);
   }
 
+  // True when a key or paste should be moved into Gemini's composer.
+  function canRedirectInput(e) {
+    if (!settings.typeToChat) return false;
+    const path = e.composedPath();
+    if (hostElement && path.includes(hostElement)) return false;
+    if (path.some(isEditable) || isEditable(document.activeElement)) return false;
+    if (hasOpenOverlay()) return false;
+    return true;
+  }
+
+  // Ctrl/Cmd+V, including Shift+Ctrl/Cmd+V (paste without formatting).
+  function isPasteShortcut(e) {
+    if (e.altKey || e.isComposing || e.repeat) return false;
+    if (!(e.ctrlKey || e.metaKey)) return false;
+    return e.key === 'v' || e.key === 'V';
+  }
+
+  // Paste that is not already aimed at the composer or another text box.
+  function pasteShouldMove(e) {
+    if (!settings.typeToChat) return false;
+    const path = e.composedPath();
+    if (hostElement && path.includes(hostElement)) return false;
+    if (hasOpenOverlay()) return false;
+    const editor = findChatEditor();
+    if (!editor || path.includes(editor)) return false;
+    if (path.some(isEditable)) return false;
+    if (isEditable(document.activeElement) && document.activeElement !== editor) return false;
+    return true;
+  }
+
+  // Gemini's upload control accepts images dropped onto a file input. Returns
+  // false when there is nothing to hand the files to.
+  function forwardFiles(editor, files) {
+    editor.focus();
+    const root = barElement && barElement.contains(editor) ? barElement : editor.parentElement;
+    const input = root && root.querySelector('input[type="file"]');
+    if (!input || !files.length) return false;
+    const transfer = new DataTransfer();
+    for (const file of files) transfer.items.add(file);
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  }
+
   function watchTyping() {
+    // Focus the composer before the default paste, so Gemini receives images
+    // as well as text. Capture runs before the target's own handlers.
+    window.addEventListener('keydown', (e) => {
+      if (!isPasteShortcut(e) || !canRedirectInput(e)) return;
+      const editor = findChatEditor();
+      if (!editor) return;
+      editor.focus();
+      moveCaretToEnd(editor);
+    }, true);
+
     // Bubble phase on window, so Gemini's own shortcuts get the key first.
     window.addEventListener('keydown', (e) => {
       if (!settings.typeToChat || e.defaultPrevented || e.isComposing) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       // Only single printable characters. Space is skipped so it can still scroll the page.
       if (e.key.length !== 1 || e.key === ' ') return;
-
-      const path = e.composedPath();
-      if (hostElement && path.includes(hostElement)) return;
-      if (path.some(isEditable) || isEditable(document.activeElement)) return;
-      if (hasOpenOverlay()) return;
+      if (!canRedirectInput(e)) return;
 
       const editor = findChatEditor();
       if (!editor) return;
@@ -1199,6 +1260,28 @@
       e.preventDefault();
       insertIntoEditor(editor, e.key);
     });
+
+    // Right-click paste, the Edit menu, and any Ctrl/Cmd+V that did not land
+    // in the composer. Keyboard image paste is left to Gemini after the focus
+    // above. Text is inserted here so the bar opens either way.
+    window.addEventListener('paste', (e) => {
+      if (!pasteShouldMove(e)) return;
+      const editor = findChatEditor();
+      if (!editor) return;
+      const clipboard = e.clipboardData;
+      const text = clipboard ? clipboard.getData('text/plain') : '';
+      if (text) {
+        e.preventDefault();
+        e.stopPropagation();
+        insertIntoEditor(editor, text);
+        return;
+      }
+      const files = clipboard && clipboard.files;
+      if (files && files.length && forwardFiles(editor, files)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    }, true);
   }
 
   // ---------------------------------------------------------------------------
@@ -1207,10 +1290,13 @@
 
   let barElement = null;
 
+  function syncBarHeight(bar) {
+    if (!bar) return;
+    document.documentElement.style.setProperty('--hide-chatbar-bar-height', `${bar.offsetHeight}px`);
+  }
+
   const barResizeObserver = new ResizeObserver(() => {
-    if (barElement) {
-      document.documentElement.style.setProperty('--hide-chatbar-bar-height', `${barElement.offsetHeight}px`);
-    }
+    syncBarHeight(barElement);
   });
 
   // The chat bar is Gemini's .input-area-container. If Gemini renames it,
@@ -1236,39 +1322,293 @@
     const bar = findBar();
     if (bar === barElement) {
       if (bar && !bar.classList.contains('hide-chatbar-bar')) bar.classList.add('hide-chatbar-bar');
-      return;
+      return false;
     }
 
     if (barElement) {
-      barElement.classList.remove('hide-chatbar-bar');
+      barElement.classList.remove('hide-chatbar-bar', 'hide-chatbar-revealed');
       barResizeObserver.unobserve(barElement);
     }
     barElement = bar;
     if (bar) {
       bar.classList.add('hide-chatbar-bar');
       barResizeObserver.observe(bar);
+      syncBarHeight(bar);
+    }
+    return true;
+  }
+
+  // The overlap layout is only for a bar docked at the bottom of an open
+  // chat. On the new-chat screen the composer sits in the upper middle, and
+  // pulling it up makes it narrower, higher, and covers the model picker.
+  function updateDockState() {
+    const bar = barElement;
+    if (!bar || !bar.isConnected) {
+      document.body.classList.remove('hide-chatbar-docked');
+      return;
+    }
+
+    // Freeze transitions so the measurement can't animate the bar.
+    const previousTransition = bar.style.transition;
+    const previousPriority = bar.style.getPropertyPriority('transition');
+    bar.style.setProperty('transition', 'none', 'important');
+    let top = 0;
+    let bottom = 0;
+    try {
+      document.body.classList.add('hide-chatbar-measuring');
+      const rect = bar.getBoundingClientRect();
+      top = rect.top;
+      bottom = rect.bottom;
+      document.body.classList.remove('hide-chatbar-measuring');
+      const distance = window.innerHeight - bottom;
+      const height = bottom - top;
+      // A docked composer sits low, close to the bottom edge, and is not a
+      // tall page wrapper. The centered new-chat bar fails this test.
+      const docked = height > 0 && height < window.innerHeight * 0.55 &&
+        top > window.innerHeight * 0.35 && distance >= -40 && distance <= 140;
+      document.body.classList.toggle('hide-chatbar-docked', docked);
+      void bar.offsetHeight;
+    } finally {
+      document.body.classList.remove('hide-chatbar-measuring');
+      if (previousTransition) bar.style.setProperty('transition', previousTransition, previousPriority);
+      else bar.style.removeProperty('transition');
+    }
+  }
+
+  let lastDockCheck = 0;
+  function scheduleDockCheck(force) {
+    const now = performance.now();
+    if (!force && now - lastDockCheck < 500) return;
+    lastDockCheck = now;
+    updateDockState();
+  }
+
+  function barIsDocked() {
+    return document.body.classList.contains('hide-chatbar-docked');
+  }
+
+  // Focus, a draft, click-to-open, or a hover hold means the bar is back in
+  // its own space instead of floating over the conversation.
+  function barCoversNaturally() {
+    if (!barElement || !barIsDocked()) return false;
+    if (barElement.classList.contains('hide-chatbar-revealed')) return true;
+    if (barElement.matches(':focus-within')) return true;
+    if (document.body.classList.contains('has-content')) return true;
+    return document.body.classList.contains('hide-chatbar-opened') && revealMode() === 'click';
+  }
+
+  // The strip at the very bottom of the screen, under the floating bar.
+  // Hovering or clicking here shows the bar without landing on the buttons.
+  const BOTTOM_REVEAL_PX = 36;
+  function pointerInBottomEdge(e) {
+    if (!barIsDocked() || !barElement) return false;
+    const rect = barElement.getBoundingClientRect();
+    return e.clientY >= window.innerHeight - BOTTOM_REVEAL_PX &&
+      e.clientX >= rect.left - 24 && e.clientX <= rect.right + 24;
+  }
+
+  function pointerOverBarBox(e) {
+    if (!barElement) return false;
+    const rect = barElement.getBoundingClientRect();
+    return e.clientX >= rect.left && e.clientX <= rect.right &&
+      e.clientY >= rect.top && e.clientY <= rect.bottom;
+  }
+
+  // Copy, thumbs up/down, and redo sit under the floating bar. They are small
+  // controls in the conversation column, not the bar's own send button.
+  function responseControl(el) {
+    for (let node = el; node && node !== document.body; node = node.parentElement) {
+      if (node === barElement) return null;
+      if (barElement && barElement.contains(node)) return null;
+      if (hostElement && (node === hostElement || hostElement.contains(node))) return null;
+      const action = node.getAttribute('jsaction') || '';
+      const clickable = node.matches('button, a, [role="button"], [role="menuitem"]') ||
+        action.includes('click') ||
+        (node.hasAttribute('aria-label') && node.tabIndex >= 0);
+      if (!clickable) continue;
+      const rect = node.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0 || rect.height > 72 || rect.width > 320) continue;
+      return node;
+    }
+    return null;
+  }
+
+  function responseActionAt(x, y) {
+    if (!barElement) return null;
+    const barRect = barElement.getBoundingClientRect();
+    const stack = document.elementsFromPoint(x, y);
+    for (const el of stack) {
+      if (!(el instanceof Element)) continue;
+      const control = responseControl(el);
+      if (!control) continue;
+      const rect = control.getBoundingClientRect();
+      const underPointer = x >= rect.left - 4 && x <= rect.right + 4 && y >= rect.top - 4 && y <= rect.bottom + 4;
+      if (!underPointer) continue;
+      const overlapsX = rect.left < barRect.right + 48 && rect.right > barRect.left - 48;
+      const nearBar = rect.bottom > barRect.top - 96 && rect.top < barRect.bottom - 4;
+      if (overlapsX && nearBar) return control;
+    }
+    return null;
+  }
+
+  // Once the bar is open, keep it open while the pointer is on it or on the
+  // buttons that moved up with the conversation. The extra height matches the
+  // overlap, so opening the bar does not immediately count as a leave.
+  function pointerNearRevealedBar(e) {
+    if (!barElement || !barCoversNaturally()) return false;
+    const rect = barElement.getBoundingClientRect();
+    const slop = Math.max(56, barElement.offsetHeight);
+    return e.clientX >= rect.left - 12 && e.clientX <= rect.right + 12 &&
+      e.clientY >= rect.top - slop && e.clientY <= rect.bottom + 24;
+  }
+
+  // The message list is the scroller just above the bar. Ancestors can be
+  // the page itself, so prefer the box that lines up with the bar.
+  function findScrollable(root, depth) {
+    if (!(root instanceof Element) || depth > 6 || root === barElement || root.contains(barElement)) return null;
+    const style = getComputedStyle(root);
+    const overflowY = style.overflowY;
+    if ((overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') &&
+        root.scrollHeight > root.clientHeight + 1) {
+      const rect = root.getBoundingClientRect();
+      if (rect.height >= 80 && rect.width >= 160) return root;
+    }
+    for (const child of root.children) {
+      const found = findScrollable(child, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  function findChatScroller() {
+    if (!barElement) return null;
+    const starts = [];
+    if (barElement.previousElementSibling) starts.push(barElement.previousElementSibling);
+    const parent = barElement.parentElement;
+    if (parent && parent.previousElementSibling) starts.push(parent.previousElementSibling);
+    for (const start of starts) {
+      const found = findScrollable(start, 0);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  // When the bar takes its space back, keep a conversation that was already
+  // at the bottom pinned there, so the last reply's buttons stay in view.
+  function pinChatToBottom() {
+    const scroller = findChatScroller();
+    if (!scroller || !barElement) return;
+    const gap = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    if (gap > barElement.offsetHeight + 80) return;
+    const apply = () => {
+      scroller.scrollTop = scroller.scrollHeight;
+    };
+    requestAnimationFrame(() => {
+      apply();
+      requestAnimationFrame(apply);
+    });
+  }
+
+  let revealHoldTimer = null;
+  function setHoverRevealed(on, immediate = false) {
+    if (!barElement) return;
+    const revealed = barElement.classList.contains('hide-chatbar-revealed');
+    if (on) {
+      if (revealHoldTimer) {
+        clearTimeout(revealHoldTimer);
+        revealHoldTimer = null;
+      }
+      if (!revealed) {
+        barElement.classList.add('hide-chatbar-revealed');
+        pinChatToBottom();
+      }
+      return;
+    }
+    if (!revealed) return;
+    if (revealHoldTimer) {
+      if (!immediate) return;
+      clearTimeout(revealHoldTimer);
+      revealHoldTimer = null;
+    }
+    if (immediate) {
+      barElement.classList.remove('hide-chatbar-revealed');
+      return;
+    }
+    const delay = settings.hideDelayEnabled ? clampDelayMs(settings.hideDelayMs) : 0;
+    revealHoldTimer = setTimeout(() => {
+      revealHoldTimer = null;
+      if (!barElement) return;
+      barElement.classList.remove('hide-chatbar-revealed');
+      pinChatToBottom();
+    }, delay);
+  }
+
+  function watchHoverReveal() {
+    window.addEventListener('pointermove', (e) => {
+      if (!barIsDocked() || revealMode() !== 'hover') return;
+      const overAction = !!responseActionAt(e.clientX, e.clientY);
+      if (barCoversNaturally()) {
+        setHoverRevealed(pointerNearRevealedBar(e) || pointerInBottomEdge(e) || overAction);
+        return;
+      }
+      // Hidden and pointing at Copy / thumbs / redo: leave the bar hidden so
+      // the click lands on that button.
+      if (overAction) {
+        setHoverRevealed(false);
+        return;
+      }
+      setHoverRevealed(pointerInBottomEdge(e) || pointerOverBarBox(e));
+    }, { passive: true });
+
+    window.addEventListener('pointerleave', () => {
+      if (revealMode() === 'hover') setHoverRevealed(false);
+    });
+    window.addEventListener('blur', () => setHoverRevealed(false));
+
+    document.addEventListener('focusin', () => {
+      if (barElement && barElement.contains(document.activeElement)) pinChatToBottom();
+    });
+  }
+
+  function openBarFromPointer(e) {
+    document.body.classList.add('hide-chatbar-opened');
+    pinChatToBottom();
+    const interactive = e.target instanceof Element &&
+      e.target.closest('button, a, input, textarea, select, [contenteditable="true"], [role="button"]');
+    if (!interactive) {
+      const editor = findChatEditor();
+      if (editor) requestAnimationFrame(() => editor.focus());
     }
   }
 
   // In click mode, a click or tap on the bar keeps it open until the next
   // click elsewhere. Gemini's popups (upload menu, model picker) are drawn
-  // outside the bar, so clicks in them leave it open.
+  // outside the bar, so clicks in them leave it open. A docked bar is removed
+  // from hit testing while it is hidden, so the bottom edge and the bar's box
+  // are checked by position. Response buttons keep the click.
   function watchBarClicks() {
     document.addEventListener('pointerdown', (e) => {
       if (revealMode() !== 'click') return;
       const path = e.composedPath();
-      if (barElement && path.includes(barElement)) {
-        document.body.classList.add('hide-chatbar-opened');
-        const interactive = e.target instanceof Element &&
-          e.target.closest('button, a, input, textarea, select, [contenteditable="true"], [role="button"]');
-        if (!interactive) {
-          const editor = findChatEditor();
-          if (editor) requestAnimationFrame(() => editor.focus());
-        }
-        return;
-      }
       if (hostElement && path.includes(hostElement)) return;
       if (path.some((el) => el instanceof Element && el.matches('.cdk-overlay-container'))) return;
+
+      if (barIsDocked()) {
+        const overAction = !!responseActionAt(e.clientX, e.clientY);
+        const overBar = pointerOverBarBox(e) || pointerInBottomEdge(e) || (barElement && path.includes(barElement));
+        if (overBar && !overAction) {
+          openBarFromPointer(e);
+          return;
+        }
+        if (overAction) return;
+        document.body.classList.remove('hide-chatbar-opened');
+        return;
+      }
+
+      if (barElement && path.includes(barElement)) {
+        openBarFromPointer(e);
+        return;
+      }
       document.body.classList.remove('hide-chatbar-opened');
     }, true);
   }
@@ -1280,8 +1620,12 @@
 
     function checkContent() {
       scheduled = false;
-      trackBar();
-      document.body.classList.toggle('has-content', editorHasDraft(findChatEditor()));
+      const barChanged = trackBar();
+      scheduleDockCheck(barChanged);
+      const hasDraft = editorHasDraft(findChatEditor());
+      const hadDraft = document.body.classList.contains('has-content');
+      document.body.classList.toggle('has-content', hasDraft);
+      if (hasDraft !== hadDraft) pinChatToBottom();
     }
 
     const observer = new MutationObserver(() => {
@@ -1319,6 +1663,7 @@
     watchInputContent();
     watchTyping();
     watchBarClicks();
+    watchHoverReveal();
   }
 
   if (document.readyState === 'loading') {

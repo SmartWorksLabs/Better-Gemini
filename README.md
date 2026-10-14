@@ -11,7 +11,7 @@ Clicking the toolbar icon explains this and offers a link to Gemini. It does not
 - **Smart reveal**: The bar appears when you hover over it or focus it, and hides when you move away
 - **Hover or click**: Choose whether hovering shows the bar (the default) or only a click or tap does. In click mode, the bar stays open until you click somewhere else, so passing the pointer over it does nothing
 - **Optional hide delay**: Keep the bar visible for a while after the pointer leaves. Set it with a slider or a custom amount in ms, seconds, or minutes. Off by default, so the bar hides immediately
-- **Type anywhere to chat**: On by default. A letter, number, or symbol typed outside a text box is placed in the chat box. Shortcuts that use Ctrl, Cmd, or Alt, and the space bar, are left alone. Turn this off from the Chat Bar button
+- **Type anywhere to chat**: On by default. A letter, number, or symbol typed outside a text box is placed in the chat box. Pasting does the same, including Ctrl/Cmd+V and right-click paste. Shortcuts that use Ctrl, Cmd, or Alt, and the space bar, are left alone. Turn this off from the Chat Bar button
 - **Drafts stay open**: The bar stays visible while the chat box has text
 - **Matches Gemini**: The button uses Gemini's light or dark colors
 - **Stays out of the way**: The button sits 12px from the chosen corner of the conversation, stays out of open sidebars, and moves beneath (or above, in the bottom corners) Gemini's buttons, text, and other extensions' widgets. That behavior can be turned off
@@ -66,22 +66,27 @@ python3 scripts/generate_icons.py
 
 ## How it works
 
-`content.js` finds Gemini's chat bar (`.input-area-container`), tags it with `.hide-chatbar-bar`, and keeps its height in `--hide-chatbar-bar-height`. While the extension is active, the bar is pulled up by that height and faded:
+`content.js` finds Gemini's chat bar (`.input-area-container`), tags it with `.hide-chatbar-bar`, and keeps its height in `--hide-chatbar-bar-height`. While the extension is active, the bar is faded. The pull-up layout is applied only when the bar is docked at the bottom of an open chat (`hide-chatbar-docked`). On the new-chat screen the composer stays in Gemini's own size and place, so the model picker beside it keeps working.
+
+For a docked bar:
 
 ```css
 margin-top: calc(-1 * var(--hide-chatbar-bar-height, 0px));
 opacity: var(--hide-chatbar-hidden-opacity, 0);
+pointer-events: none;
 ```
 
-The negative margin gives the bar's space back to the conversation, so the bar floats over the bottom of the chat. Revealing it only changes the opacity. A backdrop in the page color covers the text behind it. Because the bar does not move again on hover, small pointer movements do not make it flicker.
+The negative margin gives the bar's space back to the conversation, so the bar floats over the bottom of the chat. Clicks pass through that hidden bar. Copy, thumbs up/down, and redo under the last reply stay clickable, and hovering those buttons does not open the bar on top of them.
+
+When the bar is actually shown, the margin goes back to zero. The conversation shifts up and those buttons sit above the bar. A backdrop in the page color covers the text behind the bar only while it is overlapping. The bar stays open while the pointer is on it or on those buttons, so the shift does not flicker.
 
 It fades back in on:
 
-- **Hover**: The pointer is over the bar (when **Show the chat bar on** is set to Hover)
-- **Click**: The bar was clicked or tapped, until the next click outside it (when set to Click or tap). Clicks in Gemini's popups, like the upload menu, keep it open
+- **Hover**: The pointer is over the bar, or over the bottom edge of the screen (when **Show the chat bar on** is set to Hover). Hovering the buttons under the last reply does not count
+- **Click**: The bar or that bottom edge was clicked or tapped, until the next click outside it (when set to Click or tap). Clicks in Gemini's popups, like the upload menu, keep it open. Clicks on the buttons under the last reply do not open the bar
 - **Focus**: The chat box is focused
 - **Draft**: The chat box has text
-- **Typing**: With type anywhere on, a letter, number, or symbol typed while no text box is focused is moved into the chat box. This only targets Gemini's composer, not another text box on the page
+- **Typing or paste**: With type anywhere on, a letter, number, or symbol typed while no text box is focused is moved into the chat box. A paste from the keyboard or the context menu is moved there too. This only targets Gemini's composer, not another text box on the page
 
 The wait before fading out comes from **Delay before hiding**. That delay is stored in `--hide-chatbar-hide-delay`.
 
@@ -161,7 +166,7 @@ Hides the Gemini chat input bar until the user hovers, clicks, or types, and pro
 
 **Detailed description**
 
-Hide Chat Bar for Gemini hides the chat input bar on gemini.google.com until you need it. The bar fades and gives its space to the conversation. It comes back when you hover or click it, while a draft is in the box, or when you type a letter anywhere on the page.
+Hide Chat Bar for Gemini hides the chat input bar on gemini.google.com until you need it. The bar fades and gives its space to the conversation. It comes back when you hover or click it, while a draft is in the box, or when you type or paste anywhere on the page. While it is hidden, the buttons under the last reply stay clickable. When the bar is open, the conversation moves up so those buttons sit above it. On a new chat, the centered bar keeps Gemini's own size and position, so the model picker still works.
 
 Type anywhere to chat is on by default. Turn it off from the Chat Bar button on the page. That menu also sets whether hovering or clicking shows the bar, how visible the hidden bar is, how long the bar waits before hiding, where the button sits, and whether the button moves aside for other items.
 
@@ -179,7 +184,7 @@ The extension only runs on gemini.google.com, where it hides the chat bar and sh
 
 - Privacy policy: `https://github.com/SmartWorksLabs/Hide-Chat-Bar-for-Gemini/blob/main/PRIVACY.md` once this file is on the main branch
 - Check **Website content**. On Gemini, the extension checks whether the chat box has text so the bar can stay open during a draft. The text is not stored or sent to the developer
-- Check **User activity**. When type anywhere is on, a typed character is placed into the chat box. It is not stored or sent to the developer
+- Check **User activity**. When type anywhere is on, a typed character or pasted text is placed into the chat box. It is not stored or sent to the developer
 - Leave personal communications, web history, location, and personally identifiable information unchecked
 - Certify the limited-use statements. The required sentence is in [PRIVACY.md](PRIVACY.md)
 

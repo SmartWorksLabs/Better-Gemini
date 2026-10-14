@@ -10,7 +10,7 @@ This policy describes how the extension handles information. It does not send th
 
 **Text in the Gemini chat box, used only on the page.** On gemini.google.com, the extension checks whether the chat box has any text, so the bar can stay open while you are writing. It does not read your existing conversation, it does not save the draft, and it does not send the draft anywhere.
 
-**Keys you type, used only on the page.** Type anywhere to chat is on by default. When it is on, a letter, number, or symbol you type outside a text box is placed into the Gemini chat box. Shortcuts that use Ctrl, Cmd, or Alt, and the space bar, are left alone. The key is not saved and is not sent anywhere. You can turn this off from the Chat Bar button on the page.
+**Keys you type and text you paste, used only on the page.** Type anywhere to chat is on by default. When it is on, a letter, number, or symbol you type outside a text box is placed into the Gemini chat box. Pasting outside a text box does the same with the pasted text. Shortcuts that use Ctrl, Cmd, or Alt, and the space bar, are left alone. The key or pasted text is not saved and is not sent anywhere. You can turn this off from the Chat Bar button on the page.
 
 ## What the extension does not do
 

@@ -1,30 +1,38 @@
 /* Hide Chat Bar for Gemini - Content Styles */
 
 /* content.js finds the chat bar (Gemini's .input-area-container) and tags it
-   with .hide-chatbar-bar, and keeps --hide-chatbar-bar-height up to date. */
+   with .hide-chatbar-bar, and keeps --hide-chatbar-bar-height up to date.
+   hide-chatbar-docked is added only when that bar sits at the bottom of an
+   open chat. The new-chat screen is left in Gemini's own layout. */
 
 .hide-chatbar-enabled .hide-chatbar-bar {
   transition: opacity 0.15s ease !important;
 }
 
-/* Hidden state. The negative margin pulls the bar up over the conversation,
-   so its space is given back to the chat and messages run down to just above
-   the "Gemini can make mistakes" line. The bar still reacts to hover while
-   invisible. --hide-chatbar-hide-delay is 0ms unless the user turns on
-   "Delay before hiding". */
+/* Fade every chat bar. On the new-chat screen this is the only change, so
+   the centered bar keeps its width, position, and model picker. */
 .hide-chatbar-active .hide-chatbar-bar {
-  position: relative !important;
-  z-index: 3 !important;
-  margin-top: calc(-1 * var(--hide-chatbar-bar-height, 0px)) !important;
-  background-color: inherit !important;
   opacity: var(--hide-chatbar-hidden-opacity, 0) !important;
   transition: opacity 0.15s ease var(--hide-chatbar-hide-delay, 0ms) !important;
 }
 
+/* Docked bar: give its space back to the conversation. Clicks pass through
+   the hidden bar, so Copy, thumbs up/down, and redo stay usable.
+   --hide-chatbar-hide-delay is 0ms unless "Delay before hiding" is on.
+   hide-chatbar-measuring turns these overrides off for one layout read. */
+.hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring) .hide-chatbar-bar {
+  position: relative !important;
+  z-index: 3 !important;
+  margin-top: calc(-1 * var(--hide-chatbar-bar-height, 0px)) !important;
+  background-color: inherit !important;
+  pointer-events: none !important;
+  transition: opacity 0.15s ease var(--hide-chatbar-hide-delay, 0ms),
+              margin-top 0.15s ease var(--hide-chatbar-hide-delay, 0ms) !important;
+}
+
 /* The conversation column is wider than the bar, so a backdrop in the page
-   colour covers the text around it, fading in at the top. It fades with the
-   bar and doesn't catch the mouse. */
-.hide-chatbar-active .hide-chatbar-bar::before {
+   colour covers the text around the overlapping bar. It doesn't catch clicks. */
+.hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring) .hide-chatbar-bar::before {
   content: '';
   position: absolute;
   inset: -20px -32px -16px;
@@ -35,12 +43,31 @@
   pointer-events: none;
 }
 
-/* Revealed while focused and while there's a draft, plus on hover or after a
-   click on the bar, depending on the "Show the chat bar on" setting. */
+/* Shown again: focused, a draft, hover, or a click, depending on settings. */
 .hide-chatbar-active.hide-chatbar-reveal-hover .hide-chatbar-bar:hover,
 .hide-chatbar-active.hide-chatbar-opened .hide-chatbar-bar,
 .hide-chatbar-active .hide-chatbar-bar:focus-within,
-.hide-chatbar-active.has-content .hide-chatbar-bar {
+.hide-chatbar-active.has-content .hide-chatbar-bar,
+.hide-chatbar-active .hide-chatbar-bar.hide-chatbar-revealed {
   opacity: 1 !important;
-  transition: opacity 0.15s ease !important;
+  transition: opacity 0.15s ease, margin-top 0.15s ease !important;
+}
+
+/* A docked bar that is actually open sits back in its own space. The
+   conversation moves up, and the buttons under the last reply clear the bar. */
+.hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring) .hide-chatbar-bar.hide-chatbar-revealed,
+.hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring).hide-chatbar-opened .hide-chatbar-bar,
+.hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring) .hide-chatbar-bar:focus-within,
+.hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring).has-content .hide-chatbar-bar {
+  margin-top: 0 !important;
+  pointer-events: auto !important;
+  opacity: 1 !important;
+  transition: opacity 0.15s ease, margin-top 0.15s ease !important;
+}
+
+.hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring) .hide-chatbar-bar.hide-chatbar-revealed::before,
+.hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring).hide-chatbar-opened .hide-chatbar-bar::before,
+.hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring) .hide-chatbar-bar:focus-within::before,
+.hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring).has-content .hide-chatbar-bar::before {
+  content: none;
 }
