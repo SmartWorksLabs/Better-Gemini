@@ -13,7 +13,7 @@
   const MAX_PLACEMENT_STEPS = 60;
 
   const SYNC_KEYS = [
-    'corner', 'usageCorner', 'hiddenOpacity', 'typeToChat', 'avoidOverlap',
+    'corner', 'hiddenOpacity', 'typeToChat', 'avoidOverlap',
     'hideDelayEnabled', 'hideDelayMs', 'hideDelayUnit', 'pillStyle', 'revealMode',
     'showUsage', 'showContext', 'firstInstalledDate'
   ];
@@ -33,15 +33,14 @@
 
   let settings = {
     corner: 'top-left',
-    usageCorner: 'top-right',
     hiddenOpacity: 0,
-    revealMode: 'hover',
+    revealMode: 'click',
     typeToChat: true,
     avoidOverlap: true,
     hideDelayEnabled: false,
     hideDelayMs: 500,
     hideDelayUnit: 'ms',
-    pillStyle: 'label',
+    pillStyle: 'icon',
     showUsage: true,
     showContext: true,
     firstInstalledDate: Date.now()
@@ -52,14 +51,25 @@
   let shadowRoot = null;
   let menuOpen = false;
   let placementScheduled = false;
-  let usageHostElement = null;
-  let usageShadowRoot = null;
-  let usageStackElement = null;
+  let footerElement = null;
   let contextElement = null;
+  let usageElement = null;
   let usageState = { current: null, weekly: null, updatedAt: 0 };
   let contextState = { tokens: 0, limit: 32000, estimated: true };
+  let planState = { tier: null, limit: null, updatedAt: 0 };
   let bridgeReady = false;
   let usageFetchId = 0;
+
+  const PLAN_LIMITS = {
+    FREE: 32000,
+    PLUS: 128000,
+    PRO: 1000000,
+    ULTRA: 1000000,
+    ADVANCED: 1000000
+  };
+
+  const CONTEXT_INFO =
+    'Set by your Google AI plan (Free 32k, Plus 128k, Pro/Ultra 1M) — not by Flash vs Pro.';
 
   // Load settings from storage
   function loadSettings() {
@@ -100,7 +110,7 @@
   }
 
   function revealMode() {
-    return REVEAL_MODES.includes(settings.revealMode) ? settings.revealMode : 'hover';
+    return REVEAL_MODES.includes(settings.revealMode) ? settings.revealMode : 'click';
   }
 
   function applyRevealMode() {
@@ -159,12 +169,9 @@
   // rather than sitting beside it.
   function asObstacle(el, px, py, viewport) {
     if (el === document.documentElement || el === document.body) return null;
-    if (el.id === 'better-gemini-context' || el.closest('#better-gemini-context')) return null;
+    if (el.id === 'better-gemini-footer' || el.closest('#better-gemini-footer')) return null;
 
-    // Our own floating hosts (shadow roots) - use the visible widget size.
-    if (el === usageHostElement && usageStackElement) {
-      return { rect: usageStackElement.getBoundingClientRect(), content: false };
-    }
+    // Our own settings host (shadow root) - use the visible widget size.
     if (el === hostElement && pillElement) {
       return { rect: pillElement.getBoundingClientRect(), content: false };
     }
@@ -267,7 +274,7 @@
       const x = side === 'left' ? 1 : viewport.width - 2;
       for (const fraction of [0.3, 0.5, 0.7]) {
         const hit = document.elementsFromPoint(x, viewport.height * fraction).find(
-        (el) => el !== hostElement && el !== usageHostElement
+        (el) => el !== hostElement && el !== footerElement
       );
         for (let node = hit; node && node !== document.body && node !== document.documentElement; node = node.parentElement) {
           const rect = node.getBoundingClientRect();
@@ -414,8 +421,7 @@
       fitMenu(x, y, viewport, area);
       pillElement.classList.add('placed');
     }
-    placeUsageStack();
-    placeContextLabel();
+    placeChatFooter();
   }
 
   function schedulePlacement() {
@@ -905,8 +911,7 @@
   function createPillHTML() {
     const reviewUrl = `https://chromewebstore.google.com/detail/${chrome.runtime.id}/reviews`;
     const delayUnit = DELAY_UNITS[settings.hideDelayUnit] ? settings.hideDelayUnit : 'ms';
-    const pillStyle = PILL_STYLES.includes(settings.pillStyle) ? settings.pillStyle : 'label';
-    const usageCorner = CORNERS.includes(settings.usageCorner) ? settings.usageCorner : 'top-right';
+    const pillStyle = PILL_STYLES.includes(settings.pillStyle) ? settings.pillStyle : 'icon';
     return `
       <div class="pill-container pos-${settings.corner} style-${pillStyle}">
         <button class="pill-button" aria-label="Better Gemini settings" title="Better Gemini settings" aria-haspopup="true" aria-expanded="false" aria-controls="better-gemini-settings">
@@ -915,7 +920,7 @@
         </button>
         <div class="menu" id="better-gemini-settings">
           <div class="menu-header">Features</div>
-          ${toggleRowHTML('showUsage', 'Usage tracker', 'Current and weekly limits from Gemini')}
+          ${toggleRowHTML('showUsage', 'Usage tracker', 'Current and weekly limits under the chat bar')}
           ${toggleRowHTML('showContext', 'Context window', 'Tokens used in this chat, under the bar')}
           <div class="divider"></div>
           <div class="menu-header">Chat bar</div>
@@ -956,13 +961,6 @@
             ${choiceButtonHTML('corner', 'bottom-left', 'Bottom Left', settings.corner)}
             ${choiceButtonHTML('corner', 'bottom-right', 'Bottom Right', settings.corner)}
           </div>
-          <div class="menu-header">Usage position</div>
-          <div class="choice-grid usage-corner-selector">
-            ${choiceButtonHTML('usage-corner', 'top-left', 'Top Left', usageCorner)}
-            ${choiceButtonHTML('usage-corner', 'top-right', 'Top Right', usageCorner)}
-            ${choiceButtonHTML('usage-corner', 'bottom-left', 'Bottom Left', usageCorner)}
-            ${choiceButtonHTML('usage-corner', 'bottom-right', 'Bottom Right', usageCorner)}
-          </div>
           ${toggleRowHTML('avoidOverlap', 'Make room for other items', 'Sit beside chrome when there is room; under content if needed')}
           <div class="divider"></div>
           <div class="menu-header">Button style</div>
@@ -995,9 +993,6 @@
     shadowRoot.querySelectorAll('[data-corner]').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.corner === settings.corner);
     });
-    shadowRoot.querySelectorAll('[data-usage-corner]').forEach((btn) => {
-      btn.classList.toggle('active', btn.dataset.usageCorner === settings.usageCorner);
-    });
     shadowRoot.querySelectorAll('[data-style]').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.style === settings.pillStyle);
     });
@@ -1028,7 +1023,7 @@
 
   function applyPillStyle() {
     PILL_STYLES.forEach((style) => pillElement.classList.remove(`style-${style}`));
-    const style = PILL_STYLES.includes(settings.pillStyle) ? settings.pillStyle : 'label';
+    const style = PILL_STYLES.includes(settings.pillStyle) ? settings.pillStyle : 'icon';
     pillElement.classList.add(`style-${style}`);
   }
 
@@ -1043,7 +1038,7 @@
       syncDelayUI();
       if (key === 'hideDelayEnabled') placePillNow();
     }
-    if (key === 'corner' || key === 'usageCorner') {
+    if (key === 'corner') {
       syncChoiceUI();
       placePillNow();
     }
@@ -1057,15 +1052,10 @@
       syncChoiceUI();
     }
     if (key === 'avoidOverlap') placePillNow();
-    if (key === 'showUsage') {
+    if (key === 'showUsage' || key === 'showContext') {
       syncToggleUI();
-      updateUsageVisibility();
-      placePillNow();
-    }
-    if (key === 'showContext') {
-      syncToggleUI();
-      updateContextVisibility();
-      placePillNow();
+      updateFooterVisibility();
+      placeChatFooter();
     }
     if (TOGGLE_KEYS.includes(key) && key !== 'showUsage' && key !== 'showContext') syncToggleUI();
   }
@@ -1202,13 +1192,6 @@
       btn.addEventListener('click', () => {
         saveSettings({ corner: btn.dataset.corner });
         applySetting('corner');
-      });
-    });
-
-    shadowRoot.querySelectorAll('[data-usage-corner]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        saveSettings({ usageCorner: btn.dataset.usageCorner });
-        applySetting('usageCorner');
       });
     });
 
@@ -2041,167 +2024,64 @@
     }
   }
 
-  function getUsageStyles() {
-    return `
-      :host { all: initial; font-family: 'Google Sans', Roboto, Arial, sans-serif; }
-      * { box-sizing: border-box; }
-      .usage-stack {
-        --pill-bg: #e9eef6;
-        --on-surface: #1f1f1f;
-        --on-surface-variant: #444746;
-        --ok: #0b57d0;
-        --warn: #b06000;
-        --danger: #b3261e;
-        --shadow-soft: rgba(0, 0, 0, 0.08);
-        position: fixed;
-        z-index: 999998;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        visibility: hidden;
-        color-scheme: light;
-      }
-      .usage-stack.theme-dark {
-        --pill-bg: #282a2c;
-        --on-surface: #e3e3e3;
-        --on-surface-variant: #c4c7c5;
-        --ok: #a8c7fa;
-        --warn: #fdd663;
-        --danger: #f2b8b5;
-        --shadow-soft: rgba(0, 0, 0, 0.3);
-        color-scheme: dark;
-      }
-      .usage-stack.placed { visibility: visible; }
-      .usage-stack[hidden] { display: none; }
-      .usage-pill {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        min-width: 118px;
-        height: 32px;
-        padding: 0 12px;
-        border-radius: 9999px;
-        background: var(--pill-bg);
-        color: var(--on-surface);
-        box-shadow: 0 1px 2px var(--shadow-soft), 0 2px 6px var(--shadow-soft);
-        font-size: 12px;
-        font-weight: 500;
-        cursor: pointer;
-        user-select: none;
-        border: 1px solid transparent;
-        transition: border-color 0.2s ease, color 0.2s ease;
-      }
-      .usage-pill.level-ok { border-color: transparent; color: var(--on-surface); }
-      .usage-pill.level-warn { border-color: color-mix(in srgb, var(--warn) 55%, transparent); color: var(--warn); }
-      .usage-pill.level-danger { border-color: color-mix(in srgb, var(--danger) 60%, transparent); color: var(--danger); }
-      .usage-pill:hover { filter: brightness(0.97); }
-      .usage-label { color: var(--on-surface-variant); font-weight: 500; }
-      .usage-pill.level-warn .usage-label,
-      .usage-pill.level-danger .usage-label { color: inherit; }
-      .usage-pct { margin-left: auto; font-variant-numeric: tabular-nums; }
-      .usage-dot {
-        width: 7px;
-        height: 7px;
-        border-radius: 50%;
-        background: var(--ok);
-        flex-shrink: 0;
-      }
-      .usage-pill.level-warn .usage-dot { background: var(--warn); }
-      .usage-pill.level-danger .usage-dot { background: var(--danger); }
-    `;
+  function openUsagePage() {
+    const match = location.pathname.match(/^\/u\/(\d+)/);
+    location.href = match ? `/u/${match[1]}/usage` : '/usage';
   }
 
-  function createUsageStack() {
-    if (document.getElementById('better-gemini-usage-host')) return;
-
-    usageHostElement = document.createElement('div');
-    usageHostElement.id = 'better-gemini-usage-host';
-    usageShadowRoot = usageHostElement.attachShadow({ mode: 'closed' });
-
-    const style = document.createElement('style');
-    style.textContent = getUsageStyles();
-    usageShadowRoot.appendChild(style);
-
-    usageStackElement = document.createElement('div');
-    usageStackElement.className = 'usage-stack';
-    usageStackElement.innerHTML = `
-      <button type="button" class="usage-pill" data-kind="current" title="Opens Gemini usage limits" aria-label="Current usage">
-        <span class="usage-dot"></span>
-        <span class="usage-label">Current</span>
-        <span class="usage-pct">-</span>
-      </button>
-      <button type="button" class="usage-pill" data-kind="weekly" title="Opens Gemini usage limits" aria-label="Weekly usage">
-        <span class="usage-dot"></span>
-        <span class="usage-label">Weekly</span>
-        <span class="usage-pct">-</span>
-      </button>
-    `;
-    usageShadowRoot.appendChild(usageStackElement);
-
-    usageStackElement.querySelectorAll('.usage-pill').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const match = location.pathname.match(/^\/u\/(\d+)/);
-        location.href = match ? `/u/${match[1]}/usage` : '/usage';
-      });
-    });
-
-    document.body.appendChild(usageHostElement);
-    applyUsageTheme();
-    updateUsageVisibility();
-    renderUsagePills();
+  function metricText(kind, metric) {
+    const label = kind === 'current' ? 'Current' : 'Weekly';
+    if (!metric) return `${label} -`;
+    return `${label} ${metric.percent}%`;
   }
 
-  function applyUsageTheme() {
-    if (usageStackElement) usageStackElement.classList.toggle('theme-dark', isGeminiDark());
-  }
-
-  function updateUsageVisibility() {
-    if (!usageStackElement) return;
-    usageStackElement.hidden = !settings.showUsage;
-  }
-
-  function renderUsagePills() {
-    if (!usageShadowRoot) return;
-    for (const kind of ['current', 'weekly']) {
-      const btn = usageShadowRoot.querySelector(`[data-kind="${kind}"]`);
-      if (!btn) continue;
-      const metric = usageState[kind];
-      const pctEl = btn.querySelector('.usage-pct');
-      if (!metric) {
-        pctEl.textContent = '-';
-        btn.className = 'usage-pill level-ok';
-        btn.title = 'Usage data not available yet. Click to open Gemini usage limits.';
-        continue;
-      }
-      pctEl.textContent = `${metric.percent}%`;
-      btn.className = `usage-pill ${levelClass(metric.percent)}`;
-      const reset = formatReset(metric.resetEpoch);
-      btn.title = reset
-        ? `${kind === 'current' ? 'Current' : 'Weekly'} usage - resets ${reset}. Click for details.`
-        : `${kind === 'current' ? 'Current' : 'Weekly'} usage. Click for details.`;
-    }
-    schedulePlacement();
-  }
-
-  function placeUsageStack() {
-    if (!usageStackElement || !settings.showUsage) return;
-    const corner = CORNERS.includes(settings.usageCorner) ? settings.usageCorner : 'top-right';
-    const viewport = viewportSize();
-    const area = findMainArea(viewport);
-    const size = { width: usageStackElement.offsetWidth, height: usageStackElement.offsetHeight };
-    const { x, y } = computeFloatingPosition(corner, size, viewport, area, usageHostElement);
-    usageStackElement.style.left = `${Math.round(x)}px`;
-    usageStackElement.style.top = `${Math.round(y)}px`;
-    usageStackElement.classList.add('placed');
-    applyUsageTheme();
+  function renderUsageLabel() {
+    if (!usageElement) return;
+    const current = usageState.current;
+    const weekly = usageState.weekly;
+    const worst = Math.max(current ? current.percent : 0, weekly ? weekly.percent : 0);
+    usageElement.classList.remove('level-ok', 'level-warn', 'level-danger');
+    usageElement.classList.add(levelClass(worst));
+    usageElement.textContent = '';
+    const cur = document.createElement('span');
+    cur.className = 'bg-text';
+    cur.textContent = metricText('current', current);
+    const sep = document.createElement('span');
+    sep.className = 'bg-sep';
+    sep.textContent = '\u00B7';
+    const week = document.createElement('span');
+    week.className = 'bg-text';
+    week.textContent = metricText('weekly', weekly);
+    usageElement.appendChild(cur);
+    usageElement.appendChild(sep);
+    usageElement.appendChild(week);
+    const resets = [formatReset(current && current.resetEpoch), formatReset(weekly && weekly.resetEpoch)]
+      .filter(Boolean)
+      .join(' / ');
+    usageElement.title = resets
+      ? `Gemini usage limits. Resets ${resets}. Click for details.`
+      : 'Gemini usage limits. Click for details.';
+    placeChatFooter();
   }
 
   function bridgePost(type, extra = {}) {
     window.postMessage({ source: BRIDGE_CMD, type, ...extra }, window.location.origin);
   }
 
+  function applyPlanTier(tier) {
+    if (!tier) return;
+    const key = String(tier).toUpperCase().replace(/^GOOGLE\s+AI\s+/, '');
+    const limit = PLAN_LIMITS[key];
+    if (!limit) return;
+    planState = { tier: key, limit, updatedAt: Date.now() };
+    chrome.storage.local.set({ betterGeminiPlan: planState });
+    contextState.limit = resolveContextLimit(contextState.tokens);
+    renderContextLabel();
+  }
+
   function requestUsageFetch() {
-    if (!settings.showUsage) return;
+    // Refresh usage percentages and/or plan tier (needed for the context limit).
+    if (!settings.showUsage && !settings.showContext) return;
     const id = ++usageFetchId;
     bridgePost('fetch-usage', { id });
   }
@@ -2219,15 +2099,18 @@
 
       if (type === 'usage' && payload) {
         if (payload.id && payload.id !== usageFetchId) return;
-        if (!payload.ok || !payload.usage) return;
-        const { current, weekly } = payload.usage;
-        usageState = {
-          current: current ? { percent: current.percent, resetEpoch: current.resetEpoch } : usageState.current,
-          weekly: weekly ? { percent: weekly.percent, resetEpoch: weekly.resetEpoch } : usageState.weekly,
-          updatedAt: Date.now()
-        };
-        chrome.storage.local.set({ betterGeminiUsage: usageState });
-        renderUsagePills();
+        if (!payload.ok) return;
+        if (payload.tier) applyPlanTier(payload.tier);
+        if (payload.usage) {
+          const { current, weekly } = payload.usage;
+          usageState = {
+            current: current ? { percent: current.percent, resetEpoch: current.resetEpoch } : usageState.current,
+            weekly: weekly ? { percent: weekly.percent, resetEpoch: weekly.resetEpoch } : usageState.weekly,
+            updatedAt: Date.now()
+          };
+          chrome.storage.local.set({ betterGeminiUsage: usageState });
+          renderUsageLabel();
+        }
         return;
       }
 
@@ -2247,11 +2130,11 @@
 
     bridgePost('ping');
     setInterval(() => {
-      if (document.hidden || !settings.showUsage) return;
+      if (document.hidden) return;
       requestUsageFetch();
     }, 120000);
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && settings.showUsage) requestUsageFetch();
+      if (!document.hidden) requestUsageFetch();
     });
   }
 
@@ -2262,21 +2145,40 @@
   // ---------------------------------------------------------------------------
 
   function detectContextLimit() {
-    // Prefer explicit plan badges / account labels over page chrome text.
+    // Prefer the plan read from Gemini's Usage limits page / RPC.
+    if (planState.limit && CONTEXT_TIERS.includes(planState.limit)) return planState.limit;
+
     const nodes = document.querySelectorAll(
       '[data-test-id*="plan"], [aria-label*="Google AI"], [aria-label*="AI Pro"], [aria-label*="AI Ultra"], [aria-label*="AI Plus"]'
     );
     for (const el of nodes) {
       const label = `${el.getAttribute('aria-label') || ''} ${el.textContent || ''}`;
-      if (/Ultra/i.test(label)) return 1000000;
+      if (/Ultra/i.test(label) && !/Upgrade/i.test(label)) return 1000000;
       if (/\bPro\b/i.test(label) && !/Upgrade/i.test(label)) return 1000000;
       if (/Plus/i.test(label) && !/Upgrade/i.test(label)) return 128000;
     }
 
     const sample = (document.body && document.body.innerText || '').slice(0, 12000);
-    if (/Google AI Ultra|\bAI Ultra\b/i.test(sample)) return 1000000;
+    if (/Google AI Ultra|\bAI Ultra\b/i.test(sample) && !/Upgrade to.*Ultra/i.test(sample)) return 1000000;
     if (/Google AI Pro|\bAI Pro\b/i.test(sample) && !/Upgrade to Google AI Pro/i.test(sample)) return 1000000;
     if (/Google AI Plus|\bAI Plus\b/i.test(sample) && !/Upgrade to Google AI Plus/i.test(sample)) return 128000;
+
+    // On the usage page itself, scrape the tier badge.
+    if (/\/usage(?:\/|$)/.test(location.pathname)) {
+      const root =
+        document.querySelector('usage-metrics-window') ||
+        document.querySelector('.usage-metrics-container') ||
+        document.querySelector('.usage-metrics-header');
+      const text = ((root && root.textContent) || '').replace(/\s+/g, ' ');
+      const match = text.match(/\b(?:GOOGLE\s+AI\s+)?(FREE|PLUS|PRO|ULTRA)\b/i);
+      if (match) {
+        const limit = PLAN_LIMITS[match[1].toUpperCase()];
+        if (limit) {
+          applyPlanTier(match[1].toUpperCase());
+          return limit;
+        }
+      }
+    }
 
     return contextState.limit && CONTEXT_TIERS.includes(contextState.limit)
       ? contextState.limit
@@ -2318,8 +2220,7 @@
     if (root instanceof Element) {
       const tag = root.tagName;
       if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'SVG') return;
-      if (root.id === 'better-gemini-context' || root.id === 'better-gemini-pill-host' ||
-          root.id === 'better-gemini-usage-host') return;
+      if (root.id === 'better-gemini-footer' || root.id === 'better-gemini-pill-host') return;
       if (root.getAttribute('aria-hidden') === 'true') return;
       if (root.shadowRoot) collectVisibleText(root.shadowRoot, parts, depth + 1);
     }
@@ -2444,20 +2345,49 @@
     });
   }
 
-  function createContextLabel() {
-    if (document.getElementById('better-gemini-context')) return;
+  function createChatFooter() {
+    if (document.getElementById('better-gemini-footer')) {
+      footerElement = document.getElementById('better-gemini-footer');
+      contextElement = footerElement.querySelector('.better-gemini-context');
+      usageElement = footerElement.querySelector('.better-gemini-usage');
+      return;
+    }
+
+    footerElement = document.createElement('div');
+    footerElement.id = 'better-gemini-footer';
+    footerElement.className = 'better-gemini-footer';
+
     contextElement = document.createElement('div');
-    contextElement.id = 'better-gemini-context';
     contextElement.className = 'better-gemini-context';
     contextElement.setAttribute('aria-live', 'polite');
-    document.body.appendChild(contextElement);
-    updateContextVisibility();
+
+    usageElement = document.createElement('div');
+    usageElement.className = 'better-gemini-usage';
+    usageElement.setAttribute('role', 'link');
+    usageElement.tabIndex = 0;
+    usageElement.addEventListener('click', openUsagePage);
+    usageElement.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openUsagePage();
+      }
+    });
+
+    footerElement.appendChild(contextElement);
+    footerElement.appendChild(usageElement);
+    document.body.appendChild(footerElement);
+
+    updateFooterVisibility();
     renderContextLabel();
+    renderUsageLabel();
   }
 
-  function updateContextVisibility() {
-    if (!contextElement) return;
-    contextElement.hidden = !settings.showContext;
+  function updateFooterVisibility() {
+    if (contextElement) contextElement.hidden = !settings.showContext;
+    if (usageElement) usageElement.hidden = !settings.showUsage;
+    if (footerElement) {
+      footerElement.hidden = !settings.showContext && !settings.showUsage;
+    }
   }
 
   function renderContextLabel() {
@@ -2469,45 +2399,93 @@
       ratio >= DANGER_AT ? 'level-danger' : ratio >= WARN_AT ? 'level-warn' : 'level-ok'
     );
     const approx = estimated ? '~' : '';
-    const title = estimated
-      ? 'Estimated from this chat until Gemini returns an exact token count. Limit is set by your Google AI plan (not Flash/Pro), per Google.'
-      : 'Exact token count from Gemini. Limit is set by your Google AI plan (32k / 128k / 1M), not by the selected model.';
-    contextElement.title = title;
-    // Use \u00B7 so the separator cannot be corrupted by file encoding.
+    const planNote = planState.tier ? ` Detected plan: ${planState.tier}.` : '';
+    contextElement.removeAttribute('title');
     contextElement.textContent = '';
+
     const mark = document.createElement('span');
     mark.className = 'bg-mark';
-    mark.textContent = 'Better Gemini';
+    mark.textContent = 'Context Window';
+
+    const info = document.createElement('span');
+    info.className = 'bg-info';
+    info.textContent = 'i';
+    info.title = CONTEXT_INFO + planNote;
+    info.setAttribute('aria-label', CONTEXT_INFO + planNote);
+    info.setAttribute('role', 'img');
+
     const sep = document.createElement('span');
     sep.className = 'bg-sep';
     sep.textContent = '\u00B7';
+
     const value = document.createElement('span');
     value.className = 'bg-text';
     value.textContent = `${approx}${formatTokens(tokens)} / ${formatTokens(limit)}`;
+    value.title = estimated
+      ? 'Estimated until Gemini returns an exact count.'
+      : 'Exact token count from Gemini.';
+
     contextElement.appendChild(mark);
+    contextElement.appendChild(info);
     contextElement.appendChild(sep);
     contextElement.appendChild(value);
-    placeContextLabel();
+    placeChatFooter();
   }
 
-  function placeContextLabel() {
-    if (!contextElement || !settings.showContext) return;
+  function findDisclaimerEl() {
+    if (!barElement) return null;
+    const barRect = barElement.getBoundingClientRect();
+    const nodes = document.querySelectorAll('div, span, p');
+    for (const el of nodes) {
+      if (el.closest('#better-gemini-footer') || el.closest('#better-gemini-pill-host')) continue;
+      if (el.childElementCount > 2) continue;
+      const text = (el.textContent || '').trim();
+      if (!/^Gemini is AI and can make mistakes\.?$/i.test(text)) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 40 || rect.height < 8) continue;
+      if (rect.top < barRect.bottom - 8 || rect.top > barRect.bottom + 48) continue;
+      return el;
+    }
+    return null;
+  }
+
+  // One row under the composer: context (left) + Gemini disclaimer (center) + usage (right).
+  function placeChatFooter() {
+    if (!footerElement || footerElement.hidden) return;
     if (!barElement || !barElement.isConnected) {
-      contextElement.classList.remove('placed');
+      footerElement.classList.remove('placed');
       return;
     }
-    const rect = barElement.getBoundingClientRect();
-    if (rect.width < 40 || rect.height < 10) {
-      contextElement.classList.remove('placed');
+    const barRect = barElement.getBoundingClientRect();
+    if (barRect.width < 40 || barRect.height < 10) {
+      footerElement.classList.remove('placed');
       return;
     }
-    // Sit under the bar on the left (beside the centered disclaimer, not on top of it).
-    const top = rect.bottom + (barIsDocked() && !barCoversNaturally() ? 2 : 8);
-    contextElement.style.left = `${Math.round(rect.left + 12)}px`;
-    contextElement.style.right = 'auto';
-    contextElement.style.top = `${Math.round(top)}px`;
-    contextElement.style.maxWidth = `${Math.round(Math.max(160, rect.width * 0.42))}px`;
-    contextElement.classList.add('placed');
+
+    const disclaimer = findDisclaimerEl();
+    let top;
+    let height = 16;
+    if (disclaimer) {
+      const d = disclaimer.getBoundingClientRect();
+      top = d.top;
+      height = Math.max(14, Math.round(d.height));
+      const style = getComputedStyle(disclaimer);
+      footerElement.style.fontSize = style.fontSize || '12px';
+      footerElement.style.lineHeight = style.lineHeight || '16px';
+      footerElement.style.fontFamily = style.fontFamily || "'Google Sans', Roboto, Arial, sans-serif";
+      footerElement.style.color = style.color || '#5f6368';
+    } else {
+      top = barRect.bottom + (barIsDocked() && !barCoversNaturally() ? 2 : 8);
+      footerElement.style.fontSize = '12px';
+      footerElement.style.lineHeight = '16px';
+    }
+
+    footerElement.style.left = `${Math.round(barRect.left)}px`;
+    footerElement.style.width = `${Math.round(barRect.width)}px`;
+    footerElement.style.top = `${Math.round(top)}px`;
+    footerElement.style.height = `${height}px`;
+    footerElement.classList.toggle('theme-dark', isGeminiDark());
+    footerElement.classList.add('placed');
   }
 
   function conversationKey() {
@@ -2536,7 +2514,7 @@
         loadContextStateForChat();
         refreshEstimate();
       }
-      placeContextLabel();
+      placeChatFooter();
     }, 1000);
 
     new MutationObserver(() => {
@@ -2550,16 +2528,20 @@
 
   async function init() {
     await loadSettings();
-    chrome.storage.local.get(['betterGeminiUsage'], (result) => {
+    chrome.storage.local.get(['betterGeminiUsage', 'betterGeminiPlan'], (result) => {
       if (result && result.betterGeminiUsage) {
         usageState = { ...usageState, ...result.betterGeminiUsage };
-        renderUsagePills();
+        renderUsageLabel();
+      }
+      if (result && result.betterGeminiPlan && result.betterGeminiPlan.limit) {
+        planState = { ...planState, ...result.betterGeminiPlan };
+        contextState.limit = resolveContextLimit(contextState.tokens);
+        renderContextLabel();
       }
     });
     applyHideState();
     createPill();
-    createUsageStack();
-    createContextLabel();
+    createChatFooter();
     watchBridge();
     watchContext();
     watchInputContent();
@@ -2569,7 +2551,7 @@
 
     const themeWatcher = new MutationObserver(() => {
       applyPillTheme();
-      applyUsageTheme();
+      if (footerElement) footerElement.classList.toggle('theme-dark', isGeminiDark());
     });
     themeWatcher.observe(document.body, { attributes: true, attributeFilter: ['class'] });
   }

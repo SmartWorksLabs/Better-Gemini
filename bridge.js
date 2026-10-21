@@ -277,7 +277,94 @@
     return match ? `/u/${match[1]}/usage` : '/usage';
   }
 
-  async function fetchUsage() {
+  // Google AI plan from the Usage limits page (Free 32k / Plus 128k / Pro+Ultra 1M).
+  function parsePlanFromUsageHtml(html) {
+    if (!html) return null;
+    try {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const root =
+        doc.querySelector('usage-metrics-window') ||
+        doc.querySelector('.usage-metrics-container') ||
+        doc.querySelector('.usage-metrics-header');
+      const header = (root && (root.querySelector('.usage-metrics-header') || root)) || null;
+      const headerText = ((header && header.textContent) || '').replace(/\s+/g, ' ');
+      const headerMatch = headerText.match(/\b(?:GOOGLE\s+AI\s+)?(FREE|PLUS|PRO|ULTRA|ADVANCED)\b/i);
+      if (headerMatch) return headerMatch[1].toUpperCase();
+
+      const body = ((doc.body && doc.body.textContent) || '').replace(/\s+/g, ' ');
+      // Avoid "Upgrade to Pro" CTAs on free accounts.
+      if (/\bULTRA\b/i.test(body) && !/Upgrade[\s\S]{0,48}Ultra/i.test(body)) return 'ULTRA';
+      if (/\bPRO\b/i.test(body) && !/Upgrade[\s\S]{0,48}Pro/i.test(body)) return 'PRO';
+      if (/\bPLUS\b/i.test(body) && !/Upgrade[\s\S]{0,48}Plus/i.test(body)) return 'PLUS';
+      if (/\bFREE\b/i.test(body) || /Without an AI plan|no AI plan/i.test(body)) return 'FREE';
+    } catch (_) { /* fall through */ }
+
+    // Raw HTML / embedded JSON (Angular may not hydrate in DOMParser).
+    const raw = html;
+    const badge = raw.match(/usage-metrics-header[\s\S]{0,400}?\b(FREE|PLUS|PRO|ULTRA)\b/i);
+    if (badge) return badge[1].toUpperCase();
+    if (/"tier"\s*:\s*"(FREE|PLUS|PRO|ULTRA)"/i.test(raw)) {
+      return raw.match(/"tier"\s*:\s*"(FREE|PLUS|PRO|ULTRA)"/i)[1].toUpperCase();
+    }
+    if (/\b(GOOGLE_ONE_AI_PREMIUM|GEMINI_ADVANCED|AI_PREMIUM|PAID_TIER|AI_PRO)\b/i.test(raw)) return 'PRO';
+    if (/\b(AI_ULTRA|GOOGLE_ONE_AI_ULTRA)\b/i.test(raw)) return 'ULTRA';
+    if (/\b(AI_PLUS|GOOGLE_ONE_AI_PLUS)\b/i.test(raw)) return 'PLUS';
+    if (/>\s*PRO\s*</i.test(raw) && !/Upgrade[\s\S]{0,48}Pro/i.test(raw)) return 'PRO';
+    if (/>\s*ULTRA\s*</i.test(raw) && !/Upgrade[\s\S]{0,48}Ultra/i.test(raw)) return 'ULTRA';
+    if (/>\s*PLUS\s*</i.test(raw) && !/Upgrade[\s\S]{0,48}Plus/i.test(raw)) return 'PLUS';
+    return null;
+  }
+
+  function extractTierFromPayload(value, depth = 0) {
+    if (!value || depth > 10) return null;
+    if (typeof value === 'string') {
+      const m = value.match(/\b(GOOGLE\s+AI\s+)?(FREE|PLUS|PRO|ULTRA|ADVANCED)\b/i);
+      return m ? m[2].toUpperCase() : null;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = extractTierFromPayload(item, depth + 1);
+        if (found) return found;
+      }
+      return null;
+    }
+    if (typeof value === 'object') {
+      for (const key of Object.keys(value)) {
+        const found = extractTierFromPayload(value[key], depth + 1);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  function detectPlanFromWiz() {
+    try {
+      const blob = JSON.stringify(wiz());
+      if (/ULTRA/i.test(blob) && /(GOOGLE_?ONE|AI_|GEMINI|SUBSCRIPTION|TIER)/i.test(blob)) {
+        if (!/UPGRADE[\s\S]{0,24}ULTRA/i.test(blob)) return 'ULTRA';
+      }
+      if (/\bPRO\b|AI_PRO|GEMINI_ADVANCED|AI_PREMIUM|PAID_TIER/i.test(blob)) {
+        if (!/UPGRADE[\s\S]{0,24}PRO/i.test(blob)) return 'PRO';
+      }
+      if (/\bPLUS\b|AI_PLUS/i.test(blob) && !/UPGRADE[\s\S]{0,24}PLUS/i.test(blob)) return 'PLUS';
+    } catch (_) { /* ignore */ }
+    return null;
+  }
+
+  async function fetchPlanTier() {
+    const fromWiz = detectPlanFromWiz();
+    const path = usagePath();
+    const response = await originalFetch(path, {
+      method: 'GET',
+      credentials: 'include',
+      headers: { Accept: 'text/html' }
+    });
+    if (!response.ok) return fromWiz;
+    const html = await response.text();
+    return parsePlanFromUsageHtml(html) || fromWiz;
+  }
+
+  async function fetchUsageAndPlan() {
     const data = wiz();
     const token = sessionToken();
     if (!token) throw new Error('no-token');
@@ -309,23 +396,35 @@
     if (!response.ok) throw new Error(`http-${response.status}`);
     const text = await response.text();
 
+    let usage = null;
+    let tier = null;
     for (const { payload } of decodeBatchExecute(text)) {
-      const usage = extractUsage(payload);
-      if (usage) return usage;
+      if (!usage) usage = extractUsage(payload);
+      if (!tier) tier = extractTierFromPayload(payload);
     }
 
-    // Fallback line scan used by several public userscripts.
-    for (const raw of text.split('\n')) {
-      const line = raw.trim();
-      if (!line.includes('wrb.fr') || !line.includes(RPC_USAGE)) continue;
-      try {
-        const parsed = JSON.parse(line);
-        const payload = JSON.parse(parsed[0][2]);
-        const usage = extractUsage(payload);
-        if (usage) return usage;
-      } catch (_) { /* next */ }
+    if (!usage) {
+      for (const raw of text.split('\n')) {
+        const line = raw.trim();
+        if (!line.includes('wrb.fr') || !line.includes(RPC_USAGE)) continue;
+        try {
+          const parsed = JSON.parse(line);
+          const payload = JSON.parse(parsed[0][2]);
+          usage = extractUsage(payload);
+          if (!tier) tier = extractTierFromPayload(payload);
+          if (usage) break;
+        } catch (_) { /* next */ }
+      }
     }
-    throw new Error('parse-failed');
+
+    if (!tier) {
+      try {
+        tier = await fetchPlanTier();
+      } catch (_) { /* optional */ }
+    }
+
+    if (!usage && !tier) throw new Error('parse-failed');
+    return { usage: usage || null, tier: tier || null };
   }
 
   window.addEventListener('message', (event) => {
@@ -336,8 +435,8 @@
       return;
     }
     if (type === 'fetch-usage') {
-      fetchUsage()
-        .then((usage) => post('usage', { id, ok: true, usage }))
+      fetchUsageAndPlan()
+        .then((result) => post('usage', { id, ok: true, usage: result.usage, tier: result.tier }))
         .catch((err) => post('usage', { id, ok: false, error: String(err && err.message || err) }));
     }
   });

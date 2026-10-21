@@ -75,7 +75,7 @@ python3 scripts/generate_icons.py
 
 Preferences are stored in `chrome.storage.sync`:
 
-- `corner`, `usageCorner`, `hiddenOpacity`, `revealMode`, `typeToChat`, `avoidOverlap`
+- `corner`, `hiddenOpacity`, `revealMode`, `typeToChat`, `avoidOverlap`
 - `hideDelayEnabled`, `hideDelayMs`, `hideDelayUnit`, `pillStyle`
 - `showUsage`, `showContext`, `firstInstalledDate`
 

@@ -73,65 +73,141 @@
   content: none;
 }
 
-/* Context window — disclaimer-sized type, left under the chat bar (beside the
-   centered native disclaimer, not stacked on top of it). */
-.better-gemini-context {
+/* Footer row under the chat bar: context (left) and usage (right), sharing the
+   same baseline as Gemini's centered disclaimer. */
+.better-gemini-footer {
   position: fixed;
   z-index: 999990;
-  transform: none;
   display: none;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 6px;
-  padding: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px;
+  box-sizing: border-box;
   pointer-events: none;
   font-family: 'Google Sans', Roboto, Arial, sans-serif;
   font-size: 12px;
-  line-height: 1.3;
+  font-weight: 400;
+  line-height: 16px;
   letter-spacing: 0.01em;
   color: #5f6368;
-  text-align: left;
   white-space: nowrap;
-  max-width: min(100vw - 24px, 420px);
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-body.dark-theme .better-gemini-context,
-.better-gemini-context.theme-dark {
+body.dark-theme .better-gemini-footer,
+.better-gemini-footer.theme-dark {
   color: #9aa0a6;
 }
 
-.better-gemini-context.placed:not([hidden]) {
+.better-gemini-footer.placed:not([hidden]) {
   display: flex;
 }
 
-.better-gemini-context .bg-mark {
-  font-weight: 500;
-  opacity: 0.72;
-  pointer-events: auto;
+.better-gemini-context,
+.better-gemini-usage {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font: inherit;
+  color: inherit;
+  line-height: inherit;
 }
 
-.better-gemini-context .bg-sep {
+.better-gemini-context[hidden],
+.better-gemini-usage[hidden] {
+  display: none !important;
+}
+
+.better-gemini-context .bg-mark,
+.better-gemini-context .bg-sep,
+.better-gemini-context .bg-text,
+.better-gemini-usage .bg-sep,
+.better-gemini-usage .bg-text {
+  font: inherit;
+  font-weight: 400;
+  line-height: inherit;
+  vertical-align: baseline;
+}
+
+.better-gemini-context .bg-mark {
+  opacity: 0.85;
+}
+
+.better-gemini-context .bg-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  margin: 0 1px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 8px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0;
+  opacity: 0.65;
+  cursor: help;
+  pointer-events: auto;
+  user-select: none;
+}
+
+.better-gemini-context .bg-info:hover {
+  opacity: 1;
+}
+
+.better-gemini-context .bg-sep,
+.better-gemini-usage .bg-sep {
   opacity: 0.45;
 }
 
-.better-gemini-context .bg-text {
+.better-gemini-context .bg-text,
+.better-gemini-usage .bg-text {
   font-variant-numeric: tabular-nums;
 }
 
-.better-gemini-context.level-warn {
+.better-gemini-usage {
+  pointer-events: auto;
+  cursor: pointer;
+  margin-left: auto;
+  text-align: right;
+  justify-content: flex-end;
+}
+
+.better-gemini-usage:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.better-gemini-usage:focus-visible {
+  outline: 2px solid #0b57d0;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.better-gemini-context.level-warn,
+.better-gemini-usage.level-warn {
   color: #b06000;
 }
 
-.better-gemini-context.level-danger {
+.better-gemini-context.level-danger,
+.better-gemini-usage.level-danger {
   color: #b3261e;
 }
 
-body.dark-theme .better-gemini-context.level-warn {
+body.dark-theme .better-gemini-context.level-warn,
+body.dark-theme .better-gemini-usage.level-warn,
+.better-gemini-footer.theme-dark .level-warn {
   color: #fdd663;
 }
 
-body.dark-theme .better-gemini-context.level-danger {
+body.dark-theme .better-gemini-context.level-danger,
+body.dark-theme .better-gemini-usage.level-danger,
+.better-gemini-footer.theme-dark .level-danger {
   color: #f2b8b5;
 }
