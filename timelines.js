@@ -46,18 +46,53 @@
     return m ? `c_${m[1]}` : null;
   }
 
+  function extAlive() {
+    try {
+      return Boolean(chrome.runtime && chrome.runtime.id);
+    } catch (_) {
+      return false;
+    }
+  }
+
   function storageGet() {
     return new Promise((resolve) => {
-      chrome.storage.local.get([STORE_KEY], (result) => {
-        resolve((result && result[STORE_KEY]) || {});
-      });
+      if (!extAlive()) {
+        resolve({});
+        return;
+      }
+      try {
+        chrome.storage.local.get([STORE_KEY], (result) => {
+          if (chrome.runtime.lastError) {
+            resolve({});
+            return;
+          }
+          resolve((result && result[STORE_KEY]) || {});
+        });
+      } catch (_) {
+        resolve({});
+      }
     });
   }
 
   function storageSet(all) {
     return new Promise((resolve) => {
-      chrome.storage.local.set({ [STORE_KEY]: all }, resolve);
+      if (!extAlive()) {
+        resolve();
+        return;
+      }
+      try {
+        chrome.storage.local.set({ [STORE_KEY]: all }, () => {
+          void chrome.runtime.lastError;
+          resolve();
+        });
+      } catch (_) {
+        resolve();
+      }
     });
+  }
+
+  function clearChildren(el) {
+    while (el.firstChild) el.removeChild(el.firstChild);
   }
 
   async function loadThread(id) {
@@ -309,21 +344,23 @@
 
     t.activeBranchId = branchId;
     fork.activeIndex = fork.branchIds.indexOf(branchId);
-    await saveThread();
 
     const serverId = t.serverTip && t.serverTip.responseId;
     const branchTip = branch.tip && branch.tip.responseId;
-    if (branchTip && serverId && branchTip === serverId) {
+    const isLiveServerPath = Boolean(branchTip && serverId && branchTip === serverId);
+
+    if (isLiveServerPath) {
       bridgePost('clear-tip-override', {});
       clearReplay();
-    } else if (branch.tip && branch.tip.responseId) {
-      bridgePost('set-tip-override', { tip: branch.tip });
-      paintReplay(forkAt, branch);
     } else {
-      // No tip yet (brand-new branch mid-stream) — show DOM as-is.
-      bridgePost('clear-tip-override', {});
-      clearReplay();
+      // Always paint the stored path so switching is visible even if tip
+      // capture missed — tip override is best-effort for live continue.
+      if (branchTip) bridgePost('set-tip-override', { tip: branch.tip });
+      else bridgePost('clear-tip-override', {});
+      paintReplay(forkAt, branch);
     }
+
+    await saveThread();
     schedulePaint();
   }
 
@@ -397,6 +434,7 @@
     }
     const t = thread;
     const userNodes = turnNodes().filter((n) => roleOf(n) === 'user');
+    const keep = new Set();
 
     Object.keys(t.forks).forEach((key) => {
       const forkAt = Number(key);
@@ -405,62 +443,84 @@
       const host = userNodes[forkAt];
       if (!host) return;
 
-      let row = host.querySelector(':scope > .bg-timeline-controls');
+      const total = fork.branchIds.length;
+      const idx = Math.max(0, Math.min(fork.activeIndex || 0, total - 1));
+      fork.activeIndex = idx;
+      keep.add(key);
+
+      let row =
+        host.querySelector(`.bg-timeline-controls[data-fork-at="${key}"]`) ||
+        document.querySelector(`.bg-timeline-controls[data-fork-at="${key}"]`);
       if (!row) {
-        // Prefer sitting near Gemini's own action row when present.
-        const actions =
-          host.querySelector('.actions-container') ||
-          host.querySelector('[class*="buttons"]') ||
-          host.querySelector('.response-container-footer') ||
-          null;
         row = document.createElement('div');
         row.className = 'bg-timeline-controls';
         row.setAttribute('role', 'group');
         row.setAttribute('aria-label', 'Message versions');
-        if (actions && actions.parentElement) actions.parentElement.appendChild(row);
-        else host.appendChild(row);
+        row.dataset.forkAt = key;
+        // Keep inside the user turn so lookups stay stable across paints.
+        host.appendChild(row);
+      }
+      row.dataset.forkAt = key;
+
+      let prev = row.querySelector('.bg-timeline-btn[data-dir="prev"]');
+      let label = row.querySelector('.bg-timeline-count');
+      let next = row.querySelector('.bg-timeline-btn[data-dir="next"]');
+
+      if (!prev || !label || !next) {
+        // Never use innerHTML — Gemini enforces Trusted Types.
+        clearChildren(row);
+        prev = document.createElement('button');
+        prev.type = 'button';
+        prev.className = 'bg-timeline-btn';
+        prev.dataset.dir = 'prev';
+        prev.setAttribute('aria-label', 'Previous version');
+        prev.textContent = '\u2039';
+
+        label = document.createElement('span');
+        label.className = 'bg-timeline-count';
+
+        next = document.createElement('button');
+        next.type = 'button';
+        next.className = 'bg-timeline-btn';
+        next.dataset.dir = 'next';
+        next.setAttribute('aria-label', 'Next version');
+        next.textContent = '\u203A';
+
+        row.appendChild(prev);
+        row.appendChild(label);
+        row.appendChild(next);
       }
 
-      const total = fork.branchIds.length;
-      const idx = Math.max(0, Math.min(fork.activeIndex || 0, total - 1));
-      fork.activeIndex = idx;
-
-      row.innerHTML = '';
-      const prev = document.createElement('button');
-      prev.type = 'button';
-      prev.className = 'bg-timeline-btn';
-      prev.setAttribute('aria-label', 'Previous version');
-      prev.textContent = '\u2039';
-      prev.disabled = idx <= 0;
-
-      const label = document.createElement('span');
-      label.className = 'bg-timeline-count';
       label.textContent = `${idx + 1} / ${total}`;
-
-      const next = document.createElement('button');
-      next.type = 'button';
-      next.className = 'bg-timeline-btn';
-      next.setAttribute('aria-label', 'Next version');
-      next.textContent = '\u203A';
+      prev.disabled = idx <= 0;
       next.disabled = idx >= total - 1;
-
-      prev.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (idx <= 0) return;
-        selectBranch(forkAt, fork.branchIds[idx - 1]);
-      });
-      next.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (idx >= total - 1) return;
-        selectBranch(forkAt, fork.branchIds[idx + 1]);
-      });
-
-      row.appendChild(prev);
-      row.appendChild(label);
-      row.appendChild(next);
     });
+
+    document.querySelectorAll('.bg-timeline-controls').forEach((row) => {
+      if (!keep.has(row.dataset.forkAt)) row.remove();
+    });
+  }
+
+  function onControlsClick(event) {
+    const btn = event.target && event.target.closest && event.target.closest('.bg-timeline-btn');
+    if (!btn || !enabled || !thread) return;
+    const row = btn.closest('.bg-timeline-controls');
+    if (!row) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+
+    const forkAt = Number(row.dataset.forkAt);
+    const fork = thread.forks[String(forkAt)];
+    if (!fork || !fork.branchIds || fork.branchIds.length < 2) return;
+    const idx = Math.max(0, Math.min(fork.activeIndex || 0, fork.branchIds.length - 1));
+    const dir = btn.dataset.dir;
+    if (dir === 'prev' && idx > 0) {
+      selectBranch(forkAt, fork.branchIds[idx - 1]);
+    } else if (dir === 'next' && idx < fork.branchIds.length - 1) {
+      selectBranch(forkAt, fork.branchIds[idx + 1]);
+    }
   }
 
   function schedulePaint() {
@@ -470,7 +530,9 @@
       paintScheduled = false;
       try {
         ensureControls();
-      } catch (_) { /* ignore */ }
+      } catch (err) {
+        console.warn('[Better Gemini] timeline UI', err);
+      }
     });
   }
 
@@ -561,29 +623,51 @@
 
   function loadEnabled() {
     return new Promise((resolve) => {
-      chrome.storage.sync.get(['showTimelines'], (result) => {
-        enabled = result.showTimelines !== false;
+      if (!extAlive()) {
+        enabled = true;
         resolve(enabled);
-      });
+        return;
+      }
+      try {
+        chrome.storage.sync.get(['showTimelines'], (result) => {
+          if (chrome.runtime.lastError) {
+            enabled = true;
+            resolve(enabled);
+            return;
+          }
+          enabled = !result || result.showTimelines !== false;
+          resolve(enabled);
+        });
+      } catch (_) {
+        enabled = true;
+        resolve(enabled);
+      }
     });
   }
 
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'sync' && changes.showTimelines) {
-      enabled = changes.showTimelines.newValue !== false;
-      if (!enabled) {
-        clearReplay();
-        document.querySelectorAll('.bg-timeline-controls').forEach((n) => n.remove());
-        bridgePost('clear-tip-override', {});
-      } else {
-        schedulePaint();
-        syncActiveFromDom();
-      }
-    }
-  });
+  function watchSettings() {
+    if (!extAlive()) return;
+    try {
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === 'sync' && changes.showTimelines) {
+          enabled = changes.showTimelines.newValue !== false;
+          if (!enabled) {
+            clearReplay();
+            document.querySelectorAll('.bg-timeline-controls').forEach((n) => n.remove());
+            bridgePost('clear-tip-override', {});
+          } else {
+            schedulePaint();
+            syncActiveFromDom();
+          }
+        }
+      });
+    } catch (_) { /* extension reloaded */ }
+  }
 
   async function init() {
     await loadEnabled();
+    document.addEventListener('click', onControlsClick, true);
+    watchSettings();
     watchBridge();
     watchDom();
     await onChatChanged();
