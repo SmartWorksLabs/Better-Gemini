@@ -264,11 +264,7 @@ body.dark-theme .better-gemini-usage.level-danger,
   color: #f2b8b5;
 }
 
-/* ---- Message versions: controls only — never restyle Gemini messages ---- */
-
-.bg-timeline-hidden {
-  display: none !important;
-}
+/* ---- Message versions: tiny controls only. No message/font CSS. ---- */
 
 .bg-timeline-controls {
   display: inline-flex;

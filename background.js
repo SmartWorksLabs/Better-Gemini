@@ -24,9 +24,9 @@ chrome.runtime.onInstalled.addListener((details) => {
         chrome.storage.sync.set({ showTimelines: true });
       }
     });
-    // v1.2.1: drop custom-bubble timeline data / bad "You said" scrapes.
+    // v1.2.3: refresh-safe timelines + live buffer for existing chats.
     chrome.storage.local.remove(['betterGeminiTimelines']);
-    chrome.storage.local.set({ betterGeminiTimelinesVersion: 2 });
+    chrome.storage.local.set({ betterGeminiTimelinesVersion: 4 });
   }
   // Older versions stored a theme flag and an unused reveal counter.
   chrome.storage.local.remove(['darkTheme', 'interactionsCount']);
