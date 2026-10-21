@@ -73,26 +73,26 @@
   content: none;
 }
 
-/* Context window line â€” matches Gemini's disclaimer size/color, with a quiet
-   "Better Gemini" mark so it is clear this is not a native Gemini label. */
+/* Context window — disclaimer-sized type, left under the chat bar (beside the
+   centered native disclaimer, not stacked on top of it). */
 .better-gemini-context {
   position: fixed;
   z-index: 999990;
-  transform: translateX(-50%);
+  transform: none;
   display: none;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 6px;
-  padding: 0 8px;
+  padding: 0;
   pointer-events: none;
   font-family: 'Google Sans', Roboto, Arial, sans-serif;
   font-size: 12px;
   line-height: 1.3;
   letter-spacing: 0.01em;
   color: #5f6368;
-  text-align: center;
+  text-align: left;
   white-space: nowrap;
-  max-width: min(100vw - 24px, 720px);
+  max-width: min(100vw - 24px, 420px);
   overflow: hidden;
   text-overflow: ellipsis;
 }

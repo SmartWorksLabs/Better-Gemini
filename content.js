@@ -155,13 +155,13 @@
   // not cover: buttons, logos, other extensions' widgets. Big layout pieces
   // (side rails, top bars, the page itself) are not obstacles; the items
   // inside them are. Returns { rect, content } for obstacles, or null.
-  // content: true when the hit is scrolling chat text â€” prefer stacking under
+  // content: true when the hit is scrolling chat text - prefer stacking under
   // rather than sitting beside it.
   function asObstacle(el, px, py, viewport) {
     if (el === document.documentElement || el === document.body) return null;
     if (el.id === 'better-gemini-context' || el.closest('#better-gemini-context')) return null;
 
-    // Our own floating hosts (shadow roots) â€” use the visible widget size.
+    // Our own floating hosts (shadow roots) - use the visible widget size.
     if (el === usageHostElement && usageStackElement) {
       return { rect: usageStackElement.getBoundingClientRect(), content: false };
     }
@@ -951,17 +951,17 @@
           <div class="divider"></div>
           <div class="menu-header">Settings button</div>
           <div class="choice-grid corner-selector">
-            ${choiceButtonHTML('corner', 'top-left', 'â†– Top Left', settings.corner)}
-            ${choiceButtonHTML('corner', 'top-right', 'â†— Top Right', settings.corner)}
-            ${choiceButtonHTML('corner', 'bottom-left', 'â†™ Bottom Left', settings.corner)}
-            ${choiceButtonHTML('corner', 'bottom-right', 'â†˜ Bottom Right', settings.corner)}
+            ${choiceButtonHTML('corner', 'top-left', 'Top Left', settings.corner)}
+            ${choiceButtonHTML('corner', 'top-right', 'Top Right', settings.corner)}
+            ${choiceButtonHTML('corner', 'bottom-left', 'Bottom Left', settings.corner)}
+            ${choiceButtonHTML('corner', 'bottom-right', 'Bottom Right', settings.corner)}
           </div>
           <div class="menu-header">Usage position</div>
           <div class="choice-grid usage-corner-selector">
-            ${choiceButtonHTML('usage-corner', 'top-left', 'â†– Top Left', usageCorner)}
-            ${choiceButtonHTML('usage-corner', 'top-right', 'â†— Top Right', usageCorner)}
-            ${choiceButtonHTML('usage-corner', 'bottom-left', 'â†™ Bottom Left', usageCorner)}
-            ${choiceButtonHTML('usage-corner', 'bottom-right', 'â†˜ Bottom Right', usageCorner)}
+            ${choiceButtonHTML('usage-corner', 'top-left', 'Top Left', usageCorner)}
+            ${choiceButtonHTML('usage-corner', 'top-right', 'Top Right', usageCorner)}
+            ${choiceButtonHTML('usage-corner', 'bottom-left', 'Bottom Left', usageCorner)}
+            ${choiceButtonHTML('usage-corner', 'bottom-right', 'Bottom Right', usageCorner)}
           </div>
           ${toggleRowHTML('avoidOverlap', 'Make room for other items', 'Sit beside chrome when there is room; under content if needed')}
           <div class="divider"></div>
@@ -973,7 +973,7 @@
           <div class="review-prompt" style="display: none;">
             <div class="divider"></div>
             <a class="review-link" href="${reviewUrl}" target="_blank" rel="noopener noreferrer">
-              â­ Enjoying this? Leave a Review
+              Enjoying this? Leave a Review
             </a>
           </div>
         </div>
@@ -2128,12 +2128,12 @@
       <button type="button" class="usage-pill" data-kind="current" title="Opens Gemini usage limits" aria-label="Current usage">
         <span class="usage-dot"></span>
         <span class="usage-label">Current</span>
-        <span class="usage-pct">â€”</span>
+        <span class="usage-pct">-</span>
       </button>
       <button type="button" class="usage-pill" data-kind="weekly" title="Opens Gemini usage limits" aria-label="Weekly usage">
         <span class="usage-dot"></span>
         <span class="usage-label">Weekly</span>
-        <span class="usage-pct">â€”</span>
+        <span class="usage-pct">-</span>
       </button>
     `;
     usageShadowRoot.appendChild(usageStackElement);
@@ -2168,7 +2168,7 @@
       const metric = usageState[kind];
       const pctEl = btn.querySelector('.usage-pct');
       if (!metric) {
-        pctEl.textContent = 'â€”';
+        pctEl.textContent = '-';
         btn.className = 'usage-pill level-ok';
         btn.title = 'Usage data not available yet. Click to open Gemini usage limits.';
         continue;
@@ -2177,7 +2177,7 @@
       btn.className = `usage-pill ${levelClass(metric.percent)}`;
       const reset = formatReset(metric.resetEpoch);
       btn.title = reset
-        ? `${kind === 'current' ? 'Current' : 'Weekly'} usage Â· resets ${reset}. Click for details.`
+        ? `${kind === 'current' ? 'Current' : 'Weekly'} usage - resets ${reset}. Click for details.`
         : `${kind === 'current' ? 'Current' : 'Weekly'} usage. Click for details.`;
     }
     schedulePlacement();
@@ -2232,10 +2232,14 @@
       }
 
       if (type === 'usageMetadata' && payload) {
-        const used = Number(payload.promptTokenCount) || Number(payload.totalTokenCount) || 0;
+        // After a reply, context used is input history + this output.
+        const prompt = Number(payload.promptTokenCount) || 0;
+        const candidates = Number(payload.candidatesTokenCount) || 0;
+        const total = Number(payload.totalTokenCount) || 0;
+        const used = Math.max(total, prompt + candidates, prompt);
         if (used > 0) {
           setContextTokens(used, false);
-          // A completed model response is when Gemini's own usage counters move.
+          persistContextState();
           if (settings.showUsage) setTimeout(() => requestUsageFetch(), 2500);
         }
       }
@@ -2252,15 +2256,31 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Context window (under the chat bar)
+  // Context window (beside the chat bar)
+  // Gemini Apps sets the limit by Google AI plan (32k / 128k / 1M), not by
+  // which model (Flash / Pro) is selected. See Google's Gemini Apps help.
   // ---------------------------------------------------------------------------
 
   function detectContextLimit() {
-    const sample = (document.body && document.body.innerText || '').slice(0, 8000);
+    // Prefer explicit plan badges / account labels over page chrome text.
+    const nodes = document.querySelectorAll(
+      '[data-test-id*="plan"], [aria-label*="Google AI"], [aria-label*="AI Pro"], [aria-label*="AI Ultra"], [aria-label*="AI Plus"]'
+    );
+    for (const el of nodes) {
+      const label = `${el.getAttribute('aria-label') || ''} ${el.textContent || ''}`;
+      if (/Ultra/i.test(label)) return 1000000;
+      if (/\bPro\b/i.test(label) && !/Upgrade/i.test(label)) return 1000000;
+      if (/Plus/i.test(label) && !/Upgrade/i.test(label)) return 128000;
+    }
+
+    const sample = (document.body && document.body.innerText || '').slice(0, 12000);
     if (/Google AI Ultra|\bAI Ultra\b/i.test(sample)) return 1000000;
     if (/Google AI Pro|\bAI Pro\b/i.test(sample) && !/Upgrade to Google AI Pro/i.test(sample)) return 1000000;
     if (/Google AI Plus|\bAI Plus\b/i.test(sample) && !/Upgrade to Google AI Plus/i.test(sample)) return 128000;
-    return contextState.limit || 32000;
+
+    return contextState.limit && CONTEXT_TIERS.includes(contextState.limit)
+      ? contextState.limit
+      : 32000;
   }
 
   function resolveContextLimit(used) {
@@ -2268,7 +2288,6 @@
     if (!CONTEXT_TIERS.includes(limit)) {
       limit = CONTEXT_TIERS.find((t) => t >= used) || CONTEXT_TIERS[0];
     }
-    // If counts already exceed the detected plan cap, step up so the label stays honest.
     while (used > limit) {
       const idx = CONTEXT_TIERS.indexOf(limit);
       if (idx < 0 || idx >= CONTEXT_TIERS.length - 1) break;
@@ -2279,22 +2298,150 @@
 
   function formatTokens(n) {
     if (n >= 1000000) return `${(n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1)}M`;
-    if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
+    if (n >= 1000) {
+      const rounded = n >= 10000 ? Math.round(n / 1000) : Math.round(n / 100) / 10;
+      return `${rounded}k`.replace('.0k', 'k');
+    }
     return String(Math.round(n));
   }
 
+  // Walk light DOM and open shadow roots so Angular/Lit message text is counted.
+  function collectVisibleText(root, parts, depth) {
+    if (!root || depth > 24) return;
+    if (root.nodeType === Node.TEXT_NODE) {
+      const text = (root.textContent || '').replace(/\s+/g, ' ').trim();
+      if (text) parts.push(text);
+      return;
+    }
+    if (root.nodeType !== Node.ELEMENT_NODE && !(root instanceof ShadowRoot)) return;
+
+    if (root instanceof Element) {
+      const tag = root.tagName;
+      if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'SVG') return;
+      if (root.id === 'better-gemini-context' || root.id === 'better-gemini-pill-host' ||
+          root.id === 'better-gemini-usage-host') return;
+      if (root.getAttribute('aria-hidden') === 'true') return;
+      if (root.shadowRoot) collectVisibleText(root.shadowRoot, parts, depth + 1);
+    }
+
+    const children = root.childNodes;
+    for (let i = 0; i < children.length; i++) {
+      collectVisibleText(children[i], parts, depth + 1);
+    }
+  }
+
+  function conversationRoots() {
+    const roots = [];
+    const selectors = [
+      'chat-window',
+      'infinite-scroller',
+      '.chat-history',
+      '[data-test-id="chat-history"]',
+      'message-content',
+      'user-query',
+      'model-response',
+      '.conversation-container',
+      '[class*="conversation"]'
+    ];
+    for (const sel of selectors) {
+      document.querySelectorAll(sel).forEach((el) => roots.push(el));
+    }
+    // Deduplicate nested roots: keep outermost only.
+    return roots.filter((el, i, all) => !all.some((other, j) => j !== i && other.contains(el)));
+  }
+
   function estimateTokensFromDom() {
-    const root = document.querySelector('chat-window, .chat-history, [data-test-id="chat-history"]') || document.body;
-    const text = (root && root.innerText) || '';
-    // Rough local estimate until Gemini returns an exact usageMetadata count.
+    const parts = [];
+    const roots = conversationRoots();
+    if (roots.length) {
+      for (const root of roots) collectVisibleText(root, parts, 0);
+    } else {
+      // Fallback: sample the main column above the composer, not the whole page chrome.
+      if (barElement) {
+        const barRect = barElement.getBoundingClientRect();
+        const x = Math.min(window.innerWidth - 2, Math.max(2, barRect.left + barRect.width / 2));
+        const y = Math.max(40, barRect.top - 80);
+        const hit = document.elementFromPoint(x, y);
+        let node = hit;
+        while (node && node !== document.body) {
+          if (node.scrollHeight > window.innerHeight * 0.35) {
+            collectVisibleText(node, parts, 0);
+            break;
+          }
+          node = node.parentElement;
+        }
+      }
+    }
+
+    let text = parts.join('\n');
+    // Strip repeated UI chrome that often leaks into conversation containers.
+    text = text
+      .replace(/Gemini is AI and can make mistakes\.?/gi, '')
+      .replace(/Better Gemini[\s\S]{0,40}context/gi, '')
+      .replace(/\b(New chat|Settings|Gemini Apps|Google Account)\b/gi, '');
+
+    if (!text.trim()) return 0;
+    // ~4 chars/token is the usual English heuristic until Gemini returns exact counts.
     return Math.max(0, Math.ceil(text.length / 4));
   }
 
   function setContextTokens(tokens, estimated) {
-    contextState.tokens = Math.max(0, Math.round(tokens));
-    contextState.estimated = estimated;
+    const next = Math.max(0, Math.round(tokens));
+    if (!estimated) {
+      // Exact counts from Gemini always win.
+      contextState.tokens = next;
+      contextState.estimated = false;
+    } else if (!contextState.estimated && contextState.tokens > 0) {
+      // Keep the last exact reading; DOM estimates must not overwrite it.
+      contextState.limit = resolveContextLimit(contextState.tokens);
+      renderContextLabel();
+      return;
+    } else {
+      // Estimates only move upward (chat grows); ignore tiny downward DOM jitter.
+      if (next + 40 < contextState.tokens) {
+        renderContextLabel();
+        return;
+      }
+      contextState.tokens = Math.max(contextState.tokens, next);
+      contextState.estimated = true;
+    }
     contextState.limit = resolveContextLimit(contextState.tokens);
     renderContextLabel();
+  }
+
+  function persistContextState() {
+    const key = conversationKey();
+    chrome.storage.local.get(['betterGeminiContext'], (result) => {
+      const map = (result && result.betterGeminiContext) || {};
+      map[key] = {
+        tokens: contextState.tokens,
+        limit: contextState.limit,
+        estimated: contextState.estimated,
+        updatedAt: Date.now()
+      };
+      // Keep the map small.
+      const keys = Object.keys(map);
+      if (keys.length > 40) {
+        keys
+          .sort((a, b) => (map[a].updatedAt || 0) - (map[b].updatedAt || 0))
+          .slice(0, keys.length - 40)
+          .forEach((k) => { delete map[k]; });
+      }
+      chrome.storage.local.set({ betterGeminiContext: map });
+    });
+  }
+
+  function loadContextStateForChat() {
+    const key = conversationKey();
+    chrome.storage.local.get(['betterGeminiContext'], (result) => {
+      const saved = result && result.betterGeminiContext && result.betterGeminiContext[key];
+      if (saved && typeof saved.tokens === 'number' && saved.tokens > 0) {
+        contextState.tokens = saved.tokens;
+        contextState.estimated = saved.estimated !== false ? !!saved.estimated : false;
+        contextState.limit = resolveContextLimit(saved.tokens);
+        renderContextLabel();
+      }
+    });
   }
 
   function createContextLabel() {
@@ -2322,10 +2469,24 @@
       ratio >= DANGER_AT ? 'level-danger' : ratio >= WARN_AT ? 'level-warn' : 'level-ok'
     );
     const approx = estimated ? '~' : '';
-    contextElement.innerHTML =
-      `<span class="bg-mark" title="Added by Better Gemini">Better Gemini</span>` +
-      `<span class="bg-sep">Â·</span>` +
-      `<span class="bg-text">${approx}${formatTokens(tokens)} / ${formatTokens(limit)} context</span>`;
+    const title = estimated
+      ? 'Estimated from this chat until Gemini returns an exact token count. Limit is set by your Google AI plan (not Flash/Pro), per Google.'
+      : 'Exact token count from Gemini. Limit is set by your Google AI plan (32k / 128k / 1M), not by the selected model.';
+    contextElement.title = title;
+    // Use \u00B7 so the separator cannot be corrupted by file encoding.
+    contextElement.textContent = '';
+    const mark = document.createElement('span');
+    mark.className = 'bg-mark';
+    mark.textContent = 'Better Gemini';
+    const sep = document.createElement('span');
+    sep.className = 'bg-sep';
+    sep.textContent = '\u00B7';
+    const value = document.createElement('span');
+    value.className = 'bg-text';
+    value.textContent = `${approx}${formatTokens(tokens)} / ${formatTokens(limit)}`;
+    contextElement.appendChild(mark);
+    contextElement.appendChild(sep);
+    contextElement.appendChild(value);
     placeContextLabel();
   }
 
@@ -2340,17 +2501,20 @@
       contextElement.classList.remove('placed');
       return;
     }
-    // Sit just under the composer, matching the disclaimer strip's rhythm.
-    const top = rect.bottom + (barIsDocked() && !barCoversNaturally() ? 4 : 6);
-    contextElement.style.left = `${Math.round(rect.left + rect.width / 2)}px`;
+    // Sit under the bar on the left (beside the centered disclaimer, not on top of it).
+    const top = rect.bottom + (barIsDocked() && !barCoversNaturally() ? 2 : 8);
+    contextElement.style.left = `${Math.round(rect.left + 12)}px`;
+    contextElement.style.right = 'auto';
     contextElement.style.top = `${Math.round(top)}px`;
-    contextElement.style.maxWidth = `${Math.round(rect.width)}px`;
+    contextElement.style.maxWidth = `${Math.round(Math.max(160, rect.width * 0.42))}px`;
     contextElement.classList.add('placed');
   }
 
   function conversationKey() {
-    const match = location.pathname.match(/\/(?:app|c)\/([^/?#]+)/);
-    return match ? match[1] : location.pathname;
+    const match = location.pathname.match(/\/(?:app|c|u\/\d+\/app)\/([^/?#]+)/);
+    if (match) return match[1];
+    const u = location.pathname.match(/^\/u\/(\d+)/);
+    return u ? `u/${u[1]}${location.pathname}` : location.pathname;
   }
 
   function watchContext() {
@@ -2359,8 +2523,9 @@
 
     const refreshEstimate = () => {
       if (!settings.showContext) return;
-      if (!contextState.estimated && contextState.tokens > 0) return;
-      setContextTokens(estimateTokensFromDom(), true);
+      const estimate = estimateTokensFromDom();
+      if (estimate > 0 || contextState.estimated) setContextTokens(estimate, true);
+      if (estimate > 0) persistContextState();
     };
 
     setInterval(() => {
@@ -2368,6 +2533,7 @@
       if (key !== lastKey) {
         lastKey = key;
         contextState = { tokens: 0, limit: detectContextLimit(), estimated: true };
+        loadContextStateForChat();
         refreshEstimate();
       }
       placeContextLabel();
@@ -2375,9 +2541,10 @@
 
     new MutationObserver(() => {
       if (estimateTimer) clearTimeout(estimateTimer);
-      estimateTimer = setTimeout(refreshEstimate, 500);
+      estimateTimer = setTimeout(refreshEstimate, 400);
     }).observe(document.body, { childList: true, subtree: true, characterData: true });
 
+    loadContextStateForChat();
     refreshEstimate();
   }
 

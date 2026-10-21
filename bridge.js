@@ -28,53 +28,97 @@
     }
   }
 
+  function normalizeMeta(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const prompt = Number(raw.promptTokenCount ?? raw.prompt_token_count) || 0;
+    const candidates = Number(raw.candidatesTokenCount ?? raw.candidates_token_count) || 0;
+    const thoughts = Number(raw.thoughtsTokenCount ?? raw.thoughts_token_count) || 0;
+    const total = Number(raw.totalTokenCount ?? raw.total_token_count) || 0;
+    if (!prompt && !candidates && !thoughts && !total) return null;
+    return {
+      promptTokenCount: prompt,
+      candidatesTokenCount: candidates,
+      thoughtsTokenCount: thoughts,
+      totalTokenCount: total || prompt + candidates + thoughts
+    };
+  }
+
   function findUsageMetadata(value, depth = 0) {
-    if (!value || depth > 12) return null;
+    if (!value || depth > 14) return null;
     if (typeof value === 'object') {
-      if (typeof value.promptTokenCount === 'number' || typeof value.totalTokenCount === 'number') {
-        return value;
+      const direct = normalizeMeta(value);
+      if (direct) return direct;
+      if (value.usageMetadata) {
+        const nested = normalizeMeta(value.usageMetadata);
+        if (nested) return nested;
       }
       if (Array.isArray(value)) {
+        let best = null;
         for (const item of value) {
           const found = findUsageMetadata(item, depth + 1);
-          if (found) return found;
+          if (found && (!best || found.totalTokenCount >= best.totalTokenCount)) best = found;
         }
-      } else {
-        for (const key of Object.keys(value)) {
-          const found = findUsageMetadata(value[key], depth + 1);
-          if (found) return found;
-        }
+        return best;
       }
+      let best = null;
+      for (const key of Object.keys(value)) {
+        const found = findUsageMetadata(value[key], depth + 1);
+        if (found && (!best || found.totalTokenCount >= best.totalTokenCount)) best = found;
+      }
+      return best;
     }
     return null;
   }
 
   function emitUsageMetadata(meta) {
-    if (!meta) return;
-    const prompt = Number(meta.promptTokenCount) || 0;
-    const candidates = Number(meta.candidatesTokenCount) || 0;
-    const thoughts = Number(meta.thoughtsTokenCount) || 0;
-    const total = Number(meta.totalTokenCount) || prompt + candidates + thoughts;
-    post('usageMetadata', {
-      promptTokenCount: prompt,
-      candidatesTokenCount: candidates,
-      thoughtsTokenCount: thoughts,
-      totalTokenCount: total
-    });
+    const normalized = normalizeMeta(meta);
+    if (!normalized) return;
+    post('usageMetadata', normalized);
   }
 
   function extractMetaFromText(text) {
-    if (!text || !text.includes('usageMetadata')) return null;
+    if (!text) return null;
     let last = null;
-    const re = /"usageMetadata"\s*:\s*(\{(?:[^{}]|\{[^{}]*\})*\})/g;
-    let match;
-    while ((match = re.exec(text))) {
-      try {
-        last = JSON.parse(match[1]);
-      } catch (_) { /* partial chunk */ }
+
+    if (text.includes('usageMetadata') || text.includes('promptTokenCount') || text.includes('prompt_token_count')) {
+      const patterns = [
+        /"usageMetadata"\s*:\s*(\{(?:[^{}]|\{[^{}]*\})*\})/g,
+        /"promptTokenCount"\s*:\s*(\d+)/g
+      ];
+      for (const re of patterns) {
+        let match;
+        while ((match = re.exec(text))) {
+          if (re.source.includes('usageMetadata')) {
+            try {
+              last = normalizeMeta(JSON.parse(match[1])) || last;
+            } catch (_) { /* partial */ }
+          }
+        }
+      }
+      // Broader object scan around promptTokenCount.
+      const idx = text.lastIndexOf('"promptTokenCount"');
+      if (idx >= 0) {
+        const start = text.lastIndexOf('{', idx);
+        const end = text.indexOf('}', idx);
+        if (start >= 0 && end > start) {
+          try {
+            last = normalizeMeta(JSON.parse(text.slice(start, end + 1))) || last;
+          } catch (_) { /* ignore */ }
+        }
+      }
     }
-    if (last) return last;
-    return findUsageMetadata(safeParse(text));
+
+    const fromTree = findUsageMetadata(safeParse(text));
+    if (fromTree && (!last || fromTree.totalTokenCount >= last.totalTokenCount)) last = fromTree;
+
+    // batchexecute envelopes often wrap JSON strings — decode and search those too.
+    if (text.includes('wrb.fr')) {
+      for (const { payload } of decodeBatchExecute(text)) {
+        const found = findUsageMetadata(payload);
+        if (found && (!last || found.totalTokenCount >= last.totalTokenCount)) last = found;
+      }
+    }
+    return last;
   }
 
   async function readBodyText(response) {
@@ -120,13 +164,20 @@
     }
   }
 
+  function shouldInspect(url) {
+    const u = String(url || '');
+    // Relative same-origin calls (common for batchexecute) have no host.
+    if (!u || u.startsWith('blob:') || u.startsWith('data:')) return false;
+    if (u.startsWith('/') || !/^https?:/i.test(u)) return true;
+    return /gemini\.google\.com|BatchExecute|batchexecute|GenerateContent|StreamGenerate|BardChatUi/i.test(u);
+  }
+
   const originalFetch = window.fetch;
   window.fetch = function (...args) {
     const promise = originalFetch.apply(this, args);
     try {
       const url = String(typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '');
-      if (/gemini\.google\.com|BatchExecute|batchexecute|GenerateContent|StreamGenerate/i.test(url) ||
-          (args[0] && typeof args[0] === 'object' && !url.startsWith('http'))) {
+      if (shouldInspect(url)) {
         promise.then((response) => {
           if (response && response.ok) readBodyText(response);
         }).catch(() => {});
@@ -144,7 +195,7 @@
   XMLHttpRequest.prototype.send = function (...args) {
     this.addEventListener('load', () => {
       try {
-        if (!/gemini\.google\.com|BatchExecute|batchexecute|GenerateContent|StreamGenerate/i.test(this.__bgUrl || '')) return;
+        if (!shouldInspect(this.__bgUrl || '')) return;
         const found = extractMetaFromText(this.responseText);
         if (found) emitUsageMetadata(found);
       } catch (_) { /* ignore */ }
