@@ -917,7 +917,7 @@
         </button>
         <div class="menu" id="better-gemini-settings">
           <div class="menu-header">Features</div>
-          ${toggleRowHTML('showUsage', 'Usage tracker', 'Current and weekly limits under the chat bar')}
+          ${toggleRowHTML('showUsage', 'Usage tracker', 'Current Usage and Weekly Usage with reset times')}
           ${toggleRowHTML('showContext', 'Context window', 'Tokens used in this chat, under the bar')}
           <div class="divider"></div>
           <div class="menu-header">Chat bar</div>
@@ -2013,9 +2013,14 @@
       const d = new Date(epochSec * 1000);
       const n = new Date();
       const sameDay = d.toDateString() === n.toDateString();
-      return sameDay
-        ? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-        : d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+      let hours = d.getHours();
+      const mins = String(d.getMinutes()).padStart(2, '0');
+      const ap = hours >= 12 ? 'pm' : 'am';
+      hours = hours % 12 || 12;
+      const time = `${hours}:${mins}${ap}`;
+      if (sameDay) return time;
+      const day = d.toLocaleDateString(undefined, { weekday: 'short' });
+      return `${day} ${time}`;
     } catch (_) {
       return '';
     }
@@ -2026,10 +2031,52 @@
     location.href = match ? `/u/${match[1]}/usage` : '/usage';
   }
 
-  function metricText(kind, metric) {
-    const label = kind === 'current' ? 'Current' : 'Weekly';
-    if (!metric) return `${label} -`;
-    return `${label} ${metric.percent}%`;
+  function buildUsageStack(kind, metric) {
+    const stack = document.createElement('div');
+    stack.className = 'bg-stack';
+
+    const top = document.createElement('div');
+    top.className = 'bg-stack-top';
+
+    const label = document.createElement('span');
+    label.className = 'bg-label';
+    label.textContent = kind === 'current' ? 'Current Usage' : 'Weekly Usage';
+
+    const sep = document.createElement('span');
+    sep.className = 'bg-sep';
+    sep.textContent = '\u00B7';
+
+    const value = document.createElement('span');
+    value.className = 'bg-value';
+    value.textContent = metric ? `${metric.percent}%` : '-';
+
+    top.appendChild(label);
+    top.appendChild(sep);
+    top.appendChild(value);
+
+    const reset = document.createElement('div');
+    reset.className = 'bg-stack-meta';
+
+    const resetLabel = document.createElement('span');
+    resetLabel.className = 'bg-label';
+    resetLabel.textContent = 'Resets';
+
+    const resetSep = document.createElement('span');
+    resetSep.className = 'bg-sep';
+    resetSep.textContent = '\u00B7';
+
+    const resetValue = document.createElement('span');
+    resetValue.className = 'bg-value bg-value-meta';
+    const when = formatReset(metric && metric.resetEpoch);
+    resetValue.textContent = when || '—';
+
+    reset.appendChild(resetLabel);
+    reset.appendChild(resetSep);
+    reset.appendChild(resetValue);
+
+    stack.appendChild(top);
+    stack.appendChild(reset);
+    return stack;
   }
 
   function renderUsageLabel() {
@@ -2040,18 +2087,8 @@
     usageElement.classList.remove('level-ok', 'level-warn', 'level-danger');
     usageElement.classList.add(levelClass(worst));
     usageElement.textContent = '';
-    const cur = document.createElement('span');
-    cur.className = 'bg-text';
-    cur.textContent = metricText('current', current);
-    const sep = document.createElement('span');
-    sep.className = 'bg-sep';
-    sep.textContent = '\u00B7';
-    const week = document.createElement('span');
-    week.className = 'bg-text';
-    week.textContent = metricText('weekly', weekly);
-    usageElement.appendChild(cur);
-    usageElement.appendChild(sep);
-    usageElement.appendChild(week);
+    usageElement.appendChild(buildUsageStack('current', current));
+    usageElement.appendChild(buildUsageStack('weekly', weekly));
     const resets = [formatReset(current && current.resetEpoch), formatReset(weekly && weekly.resetEpoch)]
       .filter(Boolean)
       .join(' / ');
@@ -2347,6 +2384,8 @@
       footerElement = document.getElementById('better-gemini-footer');
       contextElement = footerElement.querySelector('.better-gemini-context');
       usageElement = footerElement.querySelector('.better-gemini-usage');
+      const leftover = footerElement.querySelector('.better-gemini-footer-spacer');
+      if (leftover) leftover.remove();
       return;
     }
 
@@ -2398,7 +2437,7 @@
     contextElement.textContent = '';
 
     const mark = document.createElement('span');
-    mark.className = 'bg-mark';
+    mark.className = 'bg-label';
     mark.textContent = 'Context Window';
 
     const sep = document.createElement('span');
@@ -2406,7 +2445,7 @@
     sep.textContent = '\u00B7';
 
     const value = document.createElement('span');
-    value.className = 'bg-text';
+    value.className = 'bg-value';
     value.textContent = `${formatTokens(tokens)} / ${formatTokens(limit)}`;
 
     contextElement.appendChild(mark);
@@ -2432,7 +2471,8 @@
     return null;
   }
 
-  // One row under the composer: context (left) + Gemini disclaimer (center) + usage (right).
+  // Footer box matches the chat bar width so Gemini's disclaimer stays centered
+  // under the bar. Context/usage hang flush outside the left/right edges.
   function placeChatFooter() {
     if (!footerElement || footerElement.hidden) return;
     if (!barElement || !barElement.isConnected) {
@@ -2447,7 +2487,7 @@
 
     const disclaimer = findDisclaimerEl();
     let top;
-    let height = 16;
+    let height = settings.showUsage ? 32 : 16;
     // Always force Gemini's sans stack. Copying computed font-family can fall
     // through to the browser serif default (Times) on some builds.
     footerElement.style.fontFamily = '"Google Sans", "Google Sans Text", Roboto, Arial, Helvetica, sans-serif';
@@ -2456,23 +2496,27 @@
     footerElement.style.letterSpacing = '0.01em';
     if (disclaimer) {
       const d = disclaimer.getBoundingClientRect();
-      top = d.top;
-      height = Math.max(14, Math.round(d.height));
+      height = Math.max(height, Math.round(d.height));
+      // Keep our block vertically centered on the disclaimer so the Gemini
+      // line stays visually mid-row while twin stacks sit beside it.
+      top = d.top + d.height / 2 - height / 2;
       const style = getComputedStyle(disclaimer);
       footerElement.style.fontSize = style.fontSize || '12px';
-      footerElement.style.lineHeight = style.lineHeight && style.lineHeight !== 'normal' ? style.lineHeight : '16px';
+      footerElement.style.lineHeight = '15px';
       footerElement.style.color = style.color || '#5f6368';
     } else {
       top = barRect.bottom + (barIsDocked() && !barCoversNaturally() ? 2 : 8);
       footerElement.style.fontSize = '12px';
-      footerElement.style.lineHeight = '16px';
+      footerElement.style.lineHeight = '15px';
       footerElement.style.color = '';
     }
 
+    footerElement.style.transform = '';
+    footerElement.style.maxWidth = '';
     footerElement.style.left = `${Math.round(barRect.left)}px`;
     footerElement.style.width = `${Math.round(barRect.width)}px`;
     footerElement.style.top = `${Math.round(top)}px`;
-    footerElement.style.height = `${height}px`;
+    footerElement.style.height = `${Math.round(height)}px`;
     footerElement.classList.toggle('theme-dark', isGeminiDark());
     footerElement.classList.add('placed');
   }

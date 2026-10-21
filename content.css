@@ -73,23 +73,20 @@
   content: none;
 }
 
-/* Footer row under the chat bar: context (left) and usage (right), sharing the
-   same baseline as Gemini's centered disclaimer. */
+/* Footer box matches the chat bar width (disclaimer stays centered under it).
+   Context hangs left of the bar; usage hangs right — 0px gap. */
 .better-gemini-footer {
   position: fixed;
   z-index: 999990;
   display: none;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 0 12px;
+  padding: 0;
   box-sizing: border-box;
   pointer-events: none;
   font-family: "Google Sans", "Google Sans Text", Roboto, Arial, Helvetica, sans-serif !important;
   font-size: 12px !important;
   font-weight: 400 !important;
   font-style: normal !important;
-  line-height: 16px !important;
+  line-height: 15px !important;
   letter-spacing: 0.01em !important;
   color: #5f6368;
   white-space: nowrap;
@@ -101,18 +98,17 @@ body.dark-theme .better-gemini-footer,
 }
 
 .better-gemini-footer.placed:not([hidden]) {
-  display: flex;
+  display: block;
 }
 
 .better-gemini-context,
 .better-gemini-usage {
+  position: absolute;
+  top: 50%;
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   gap: 6px;
   min-width: 0;
-  max-width: 42%;
-  overflow: hidden;
-  text-overflow: ellipsis;
   font-family: inherit !important;
   font-size: inherit !important;
   font-weight: 400 !important;
@@ -120,6 +116,26 @@ body.dark-theme .better-gemini-footer,
   line-height: inherit !important;
   letter-spacing: inherit !important;
   color: inherit;
+  white-space: nowrap;
+  transform: translateY(-50%);
+}
+
+.better-gemini-context {
+  right: 100%;
+  margin-right: 0;
+  justify-content: flex-end;
+}
+
+.better-gemini-usage {
+  left: 100%;
+  margin-left: 0;
+  pointer-events: auto;
+  cursor: pointer;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: flex-start;
+  max-width: none;
+  overflow: visible;
 }
 
 .better-gemini-context[hidden],
@@ -127,43 +143,95 @@ body.dark-theme .better-gemini-footer,
   display: none !important;
 }
 
-.better-gemini-context .bg-mark,
-.better-gemini-context .bg-sep,
-.better-gemini-context .bg-text,
-.better-gemini-usage .bg-sep,
-.better-gemini-usage .bg-text {
+/* Shared type roles — same on context and usage */
+.better-gemini-footer .bg-label,
+.better-gemini-footer .bg-sep,
+.better-gemini-footer .bg-value,
+.better-gemini-footer .bg-stack-top,
+.better-gemini-footer .bg-stack-meta {
   font-family: inherit !important;
   font-size: inherit !important;
-  font-weight: 400 !important;
   font-style: normal !important;
   line-height: inherit !important;
   letter-spacing: inherit !important;
   vertical-align: baseline;
 }
 
-.better-gemini-context .bg-mark {
-  opacity: 0.85;
+.better-gemini-footer .bg-label {
+  font-weight: 400 !important;
+  opacity: 1;
+  color: #202124;
 }
 
-.better-gemini-context .bg-sep,
-.better-gemini-usage .bg-sep {
-  opacity: 0.45;
+body.dark-theme .better-gemini-footer .bg-label,
+.better-gemini-footer.theme-dark .bg-label {
+  color: #e8eaed;
 }
 
-.better-gemini-context .bg-text,
-.better-gemini-usage .bg-text {
+/* Resets stays softer; warn/danger still tint via parent color */
+.better-gemini-footer .bg-stack-meta .bg-label {
+  color: inherit;
+  opacity: 0.72;
+}
+
+.better-gemini-context.level-warn .bg-label,
+.better-gemini-context.level-danger .bg-label,
+.better-gemini-usage.level-warn > .bg-stack > .bg-stack-top .bg-label,
+.better-gemini-usage.level-danger > .bg-stack > .bg-stack-top .bg-label {
+  color: inherit;
+}
+
+.better-gemini-footer .bg-sep {
+  font-weight: 400 !important;
+  opacity: 0.4;
+  margin: 0 0.35em;
+}
+
+.better-gemini-footer .bg-value {
+  font-weight: 500 !important;
   font-variant-numeric: tabular-nums;
+  opacity: 1;
+  color: #202124;
 }
 
-.better-gemini-usage {
-  pointer-events: auto;
-  cursor: pointer;
-  margin-left: auto;
-  text-align: right;
-  justify-content: flex-end;
+body.dark-theme .better-gemini-footer .bg-value,
+.better-gemini-footer.theme-dark .bg-value {
+  color: #e8eaed;
 }
 
-.better-gemini-usage:hover {
+.better-gemini-context.level-warn .bg-value,
+.better-gemini-context.level-danger .bg-value,
+.better-gemini-usage.level-warn .bg-value:not(.bg-value-meta),
+.better-gemini-usage.level-danger .bg-value:not(.bg-value-meta) {
+  color: inherit;
+}
+
+/* Reset times: same size; softer, keep muted (not black) */
+.better-gemini-footer .bg-value-meta {
+  font-weight: 400 !important;
+  opacity: 0.85;
+  color: inherit;
+}
+
+.better-gemini-usage .bg-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  white-space: nowrap;
+  gap: 1px;
+  line-height: inherit;
+}
+
+.better-gemini-usage .bg-stack-top,
+.better-gemini-usage .bg-stack-meta {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.better-gemini-usage:hover .bg-stack-top .bg-value {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
