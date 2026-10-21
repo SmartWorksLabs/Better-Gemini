@@ -25,6 +25,8 @@
   let bufferTimer = null;
   let liveBuffer = [];
   let preEditFreeze = null;
+  /** Last complete user+model transcript before edit UI rewrote the DOM. */
+  let lastGoodTranscript = [];
   const bridgeWaiters = new Map();
 
   function bridgePost(type, extra = {}) {
@@ -322,17 +324,55 @@
     }));
   }
 
+  function isEditModeOpen() {
+    return Boolean(
+      document.querySelector(
+        'user-query.edit-mode, user-query[class*="edit-mode"], user-query[editing], ' +
+          '.query-content.edit-mode, .query-text.edit-mode, [class*="edit-mode"] textarea'
+      )
+    );
+  }
+
+  function transcriptScore(msgs) {
+    const list = msgs || [];
+    let score = list.length * 10;
+    for (const m of list) {
+      if (m && m.role === 'model' && (m.text || m.html)) score += 100;
+      if (m && m.role === 'user' && (m.text || m.html)) score += 5;
+    }
+    return score;
+  }
+
+  function pickRicherTranscript(a, b) {
+    return transcriptScore(b) > transcriptScore(a) ? snapshotMessages(b) : snapshotMessages(a || []);
+  }
+
   function refreshLiveBuffer() {
-    if (!enabled || !chatId || viewingAlternate) return;
+    if (!enabled || !chatId || viewingAlternate || isEditModeOpen()) return;
     const msgs = scrapeMessages();
     if (!msgs.length) return;
     liveBuffer = snapshotMessages(msgs);
+    // Keep a stable pre-edit snapshot so forks don't freeze an already-rewritten DOM.
+    if (transcriptScore(msgs) >= transcriptScore(lastGoodTranscript)) {
+      lastGoodTranscript = snapshotMessages(msgs);
+    }
   }
 
   function bestFreezeMessages() {
-    if (preEditFreeze && preEditFreeze.length) return snapshotMessages(preEditFreeze);
-    if (liveBuffer.length) return snapshotMessages(liveBuffer);
-    return snapshotMessages(scrapeMessages());
+    // Never scrape mid-edit — Gemini has often already replaced the bubble by then.
+    let best = [];
+    if (preEditFreeze && preEditFreeze.length) best = pickRicherTranscript(best, preEditFreeze);
+    if (lastGoodTranscript && lastGoodTranscript.length) {
+      best = pickRicherTranscript(best, lastGoodTranscript);
+    }
+    if (liveBuffer && liveBuffer.length && !isEditModeOpen()) {
+      best = pickRicherTranscript(best, liveBuffer);
+    }
+    const ab = activeBranch();
+    if (ab && ab.messages && ab.messages.length) best = pickRicherTranscript(best, ab.messages);
+    if (best.length) return best;
+    if (!isEditModeOpen()) return snapshotMessages(scrapeMessages());
+    return [];
   }
 
   function userTurnIndexFromPrompt(prompt, messages) {
@@ -435,7 +475,10 @@
   /** Paint an entire saved branch into Gemini's message shells (keeps nested history). */
   function applyBranchInChat(forkAt, branch) {
     const msgs = snapshotMessages(branch.messages || []);
-    if (!msgs.length) return;
+    if (!msgs.length) {
+      console.warn('[Better Gemini] version has no saved messages; cannot restore');
+      return false;
+    }
 
     const nativeOnly = turnNodes({ includeClones: false });
     if (!viewingAlternate && nativeOnly.length) {
@@ -458,6 +501,7 @@
     for (let i = 0; i < msgs.length && i < nodes.length; i++) {
       nodes[i].style.display = '';
       delete nodes[i].dataset.bgTimelineHide;
+      nodes[i].classList.remove('bg-timeline-hidden');
       setNativeContent(nodes[i], msgs[i].role || roleOf(nodes[i]), msgs[i]);
     }
     for (let i = msgs.length; i < nodes.length; i++) {
@@ -468,25 +512,28 @@
     viewingAlternate = true;
     clearMessageFocusChrome();
     void forkAt;
+    return true;
   }
 
   async function syncActiveFromDom() {
-    if (!enabled || !chatId || viewingAlternate) return;
+    if (!enabled || !chatId || viewingAlternate || isEditModeOpen()) return;
     refreshLiveBuffer();
-    if (!pendingEdit && (!thread || !hasForks(thread))) return;
     const t = ensureThread();
     const branch = activeBranch();
     if (!branch) return;
-    const tipId = t.geminiTipBranchId || liveBranchId(t.forks[Object.keys(t.forks)[0]]);
-    const onLive = !Object.keys(t.forks).length || branch.id === tipId;
-    if (!onLive && !pendingEdit) return;
 
     const msgs = liveBuffer.length ? liveBuffer : scrapeMessages();
     if (!msgs.length) return;
+
+    // Always keep the live tip's transcript fresh so the first edit has something to freeze.
+    const tipId = t.geminiTipBranchId || branch.id;
+    const onLive = branch.id === tipId || pendingEdit;
+    if (!onLive && hasForks(t)) return;
+
     branch.messages = snapshotMessages(msgs);
     branch.updatedAt = Date.now();
     if (t.serverTip) branch.tip = { ...t.serverTip };
-    await saveThread();
+    if (hasForks(t) || pendingEdit) await saveThread();
     schedulePaint();
   }
 
@@ -495,16 +542,23 @@
     if (!meta || !meta.isEdit) return;
 
     const t = ensureThread();
-    // Freeze BEFORE restoring live DOM so an alternate view isn't lost.
+    // Freeze BEFORE restoring live DOM — and never trust the post-edit scrape.
     let freeze = bestFreezeMessages();
     if (viewingAlternate) {
       const shown = activeBranch();
       if (shown && shown.messages && shown.messages.length) {
-        freeze = snapshotMessages(shown.messages);
+        freeze = pickRicherTranscript(freeze, shown.messages);
       }
     }
+    // Keep whatever we froze as last-good even if Gemini already mutated the page.
+    if (freeze.length) lastGoodTranscript = snapshotMessages(freeze);
     preEditFreeze = null;
     restoreLiveView();
+
+    if (!freeze.length) {
+      console.warn('[Better Gemini] edit detected but no transcript to branch from');
+      return;
+    }
 
     let userOrd = userTurnIndexFromPrompt(meta.prompt, freeze);
     if (userOrd < 0) {
@@ -525,6 +579,12 @@
       messages: snapshotMessages(freeze),
       updatedAt: Date.now()
     };
+    // Also keep the parent tip populated so nested remaps still have content.
+    if (t.branches[parentId]) {
+      t.branches[parentId].messages = snapshotMessages(
+        pickRicherTranscript(t.branches[parentId].messages || [], freeze)
+      );
+    }
 
     // Point every fork that referenced the tip we left at this frozen snapshot instead.
     // That keeps nested ‹n/m› controls wired to the same path when you switch back.
@@ -604,17 +664,14 @@
     const branch = t.branches[branchId];
     if (!branch) return;
 
-    t.activeBranchId = branchId;
-    fork.activeIndex = fork.branchIds.indexOf(branchId);
-    alignForksToBranch(branchId);
-
     const geminiTip = t.geminiTipBranchId || liveBranchId(fork);
+    let applied = true;
+
     if (branchId === geminiTip && liveDomBackup) {
       bridgePost('clear-tip-override', {});
       restoreLiveView();
     } else if (branchId === geminiTip && !liveDomBackup) {
       bridgePost('clear-tip-override', {});
-      // Gemini DOM already is this tip — just clear alternate decorations.
       document.querySelectorAll('[data-bg-timeline-clone]').forEach((n) => n.remove());
       document.querySelectorAll('[data-bg-timeline-hide]').forEach((n) => {
         n.style.display = '';
@@ -622,15 +679,29 @@
       });
       viewingAlternate = false;
     } else {
+      if (!(branch.messages && branch.messages.length)) {
+        console.warn('[Better Gemini] cannot switch — version has no saved content');
+        schedulePaint();
+        return;
+      }
       if (branch.tip && branch.tip.responseId) {
         bridgePost('set-tip-override', { tip: branch.tip });
       } else {
         bridgePost('clear-tip-override', {});
       }
-      applyBranchInChat(forkAt, branch);
+      applied = applyBranchInChat(forkAt, branch);
+      if (!applied) {
+        schedulePaint();
+        return;
+      }
     }
 
+    t.activeBranchId = branchId;
+    fork.activeIndex = fork.branchIds.indexOf(branchId);
+    alignForksToBranch(branchId);
+
     await saveThread();
+    clearMessageFocusChrome();
     schedulePaint();
   }
 
@@ -667,18 +738,19 @@
       fork.activeIndex = idx;
       keep.add(key);
 
-      let row =
-        host.querySelector(`.bg-timeline-controls[data-fork-at="${key}"]`) ||
-        document.querySelector(`.bg-timeline-controls[data-fork-at="${key}"]`);
+      let row = document.querySelector(`.bg-timeline-controls[data-fork-at="${key}"]`);
       if (!row) {
         row = document.createElement('div');
         row.className = 'bg-timeline-controls';
         row.setAttribute('role', 'group');
         row.setAttribute('aria-label', 'Message versions');
         row.dataset.forkAt = key;
-        host.appendChild(row);
       }
       row.dataset.forkAt = key;
+      // Keep controls outside user-query so focus never draws Gemini's bubble ring.
+      if (host.contains(row) || !row.parentElement || row.previousElementSibling !== host) {
+        host.insertAdjacentElement('afterend', row);
+      }
 
       let prev = row.querySelector('.bg-timeline-btn[data-dir="prev"]');
       let label = row.querySelector('.bg-timeline-count');
@@ -728,7 +800,13 @@
   function clearMessageFocusChrome() {
     try {
       const ae = document.activeElement;
-      if (ae && ae.closest && (ae.closest('user-query') || ae.closest('.bg-timeline-controls'))) {
+      if (
+        ae &&
+        ae.closest &&
+        (ae.closest('user-query') ||
+          ae.closest('model-response') ||
+          ae.closest('.bg-timeline-controls'))
+      ) {
         ae.blur();
       }
     } catch (_) {
@@ -737,24 +815,27 @@
     document.querySelectorAll('user-query').forEach((uq) => {
       uq.classList.remove(
         'focused',
+        'selected',
         'cdk-focused',
         'cdk-mouse-focused',
         'cdk-program-focused',
         'cdk-keyboard-focused'
       );
-      const bubble = uq.querySelector(
-        '.user-query-bubble-with-background, .user-query-bubble-container, [class*="user-query-bubble"]'
-      );
-      if (bubble) {
-        bubble.classList.remove(
+      uq.style.outline = '';
+      uq.style.boxShadow = '';
+      uq.querySelectorAll(
+        '.user-query-bubble-with-background, .user-query-bubble-container, [class*="user-query-bubble"], .query-text, .query-content'
+      ).forEach((node) => {
+        node.classList.remove(
           'focused',
+          'selected',
           'cdk-focused',
           'cdk-mouse-focused',
           'cdk-program-focused'
         );
-        bubble.style.outline = '';
-        bubble.style.boxShadow = '';
-      }
+        node.style.outline = '';
+        node.style.boxShadow = '';
+      });
     });
   }
 
@@ -796,17 +877,34 @@
 
   function noteEditModeOpen() {
     if (!enabled || !chatId) return;
-    // If an alternate version is on screen, freeze THAT branch's stored transcript.
+    // Capture once when edit opens — later DOM scrapes are already poisoned.
+    if (preEditFreeze && preEditFreeze.length) return;
     if (viewingAlternate) {
       const shown = activeBranch();
       if (shown && shown.messages && shown.messages.length) {
         preEditFreeze = snapshotMessages(shown.messages);
+        lastGoodTranscript = snapshotMessages(shown.messages);
         return;
       }
     }
-    refreshLiveBuffer();
-    const msgs = liveBuffer.length ? snapshotMessages(liveBuffer) : snapshotMessages(scrapeMessages());
-    if (msgs.length) preEditFreeze = msgs;
+    // Prefer the last complete transcript over a live scrape that may already be edit UI.
+    if (lastGoodTranscript && lastGoodTranscript.length) {
+      preEditFreeze = snapshotMessages(lastGoodTranscript);
+      return;
+    }
+    if (liveBuffer.length) {
+      preEditFreeze = snapshotMessages(liveBuffer);
+      return;
+    }
+    const ab = activeBranch();
+    if (ab && ab.messages && ab.messages.length) {
+      preEditFreeze = snapshotMessages(ab.messages);
+      return;
+    }
+    if (!isEditModeOpen()) {
+      const msgs = scrapeMessages();
+      if (msgs.length) preEditFreeze = snapshotMessages(msgs);
+    }
   }
 
   async function onChatChanged() {
@@ -816,6 +914,7 @@
     pendingEdit = null;
     preEditFreeze = null;
     liveBuffer = [];
+    lastGoodTranscript = [];
     liveDomBackup = null;
     viewingAlternate = false;
     scrubLegacyArtifacts();

@@ -270,11 +270,12 @@ body.dark-theme .better-gemini-usage.level-danger,
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin: 4px 0 0;
+  margin: 0 0 0 8px;
   padding: 0;
   width: auto;
   max-width: none;
   flex: 0 0 auto;
+  vertical-align: middle;
   white-space: nowrap;
   user-select: none;
   font-family: "Google Sans", "Google Sans Text", Roboto, Arial, Helvetica, sans-serif !important;
@@ -285,6 +286,16 @@ body.dark-theme .better-gemini-usage.level-danger,
   color: #5f6368;
   opacity: 1;
   writing-mode: horizontal-tb;
+}
+
+/* Kill Gemini's focus/selection halo when a version control sits beside a turn. */
+user-query:has(+ .bg-timeline-controls):focus,
+user-query:has(+ .bg-timeline-controls):focus-within,
+user-query:has(+ .bg-timeline-controls) .user-query-bubble-with-background,
+user-query:has(+ .bg-timeline-controls) .user-query-bubble-container,
+user-query:has(+ .bg-timeline-controls) [class*="user-query-bubble"] {
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 body.dark-theme .bg-timeline-controls {
