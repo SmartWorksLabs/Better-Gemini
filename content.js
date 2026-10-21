@@ -92,8 +92,8 @@
 
   // The bar is always auto-hidden on Gemini pages.
   function applyHideState() {
-    document.body.classList.add('hide-chatbar-enabled');
-    document.body.classList.add('hide-chatbar-active');
+    document.body.classList.add('better-gemini-enabled');
+    document.body.classList.add('better-gemini-active');
     applyHiddenOpacity(settings.hiddenOpacity);
     applyHideDelay();
     applyRevealMode();
@@ -105,18 +105,18 @@
 
   function applyRevealMode() {
     const hover = revealMode() === 'hover';
-    document.body.classList.toggle('hide-chatbar-reveal-hover', hover);
-    if (hover) document.body.classList.remove('hide-chatbar-opened');
+    document.body.classList.toggle('better-gemini-reveal-hover', hover);
+    if (hover) document.body.classList.remove('better-gemini-opened');
     else setHoverRevealed(false, true);
   }
 
   function applyHiddenOpacity(percent) {
-    document.documentElement.style.setProperty('--hide-chatbar-hidden-opacity', String(percent / 100));
+    document.documentElement.style.setProperty('--better-gemini-hidden-opacity', String(percent / 100));
   }
 
   function applyHideDelay(ms = settings.hideDelayMs) {
     const delay = settings.hideDelayEnabled ? ms : 0;
-    document.documentElement.style.setProperty('--hide-chatbar-hide-delay', `${delay}ms`);
+    document.documentElement.style.setProperty('--better-gemini-hide-delay', `${delay}ms`);
   }
 
   function clampDelayMs(ms) {
@@ -155,13 +155,13 @@
   // not cover: buttons, logos, other extensions' widgets. Big layout pieces
   // (side rails, top bars, the page itself) are not obstacles; the items
   // inside them are. Returns { rect, content } for obstacles, or null.
-  // content: true when the hit is scrolling chat text — prefer stacking under
+  // content: true when the hit is scrolling chat text â€” prefer stacking under
   // rather than sitting beside it.
   function asObstacle(el, px, py, viewport) {
     if (el === document.documentElement || el === document.body) return null;
     if (el.id === 'better-gemini-context' || el.closest('#better-gemini-context')) return null;
 
-    // Our own floating hosts (shadow roots) — use the visible widget size.
+    // Our own floating hosts (shadow roots) â€” use the visible widget size.
     if (el === usageHostElement && usageStackElement) {
       return { rect: usageStackElement.getBoundingClientRect(), content: false };
     }
@@ -170,7 +170,7 @@
     }
 
     // The chat bar counts even while hidden, since it can come back at any time.
-    const bar = el.closest('.hide-chatbar-bar');
+    const bar = el.closest('.better-gemini-bar');
     if (bar) return { rect: bar.getBoundingClientRect(), content: false };
 
     const style = getComputedStyle(el);
@@ -951,17 +951,17 @@
           <div class="divider"></div>
           <div class="menu-header">Settings button</div>
           <div class="choice-grid corner-selector">
-            ${choiceButtonHTML('corner', 'top-left', '↖ Top Left', settings.corner)}
-            ${choiceButtonHTML('corner', 'top-right', '↗ Top Right', settings.corner)}
-            ${choiceButtonHTML('corner', 'bottom-left', '↙ Bottom Left', settings.corner)}
-            ${choiceButtonHTML('corner', 'bottom-right', '↘ Bottom Right', settings.corner)}
+            ${choiceButtonHTML('corner', 'top-left', 'â†– Top Left', settings.corner)}
+            ${choiceButtonHTML('corner', 'top-right', 'â†— Top Right', settings.corner)}
+            ${choiceButtonHTML('corner', 'bottom-left', 'â†™ Bottom Left', settings.corner)}
+            ${choiceButtonHTML('corner', 'bottom-right', 'â†˜ Bottom Right', settings.corner)}
           </div>
           <div class="menu-header">Usage position</div>
           <div class="choice-grid usage-corner-selector">
-            ${choiceButtonHTML('usage-corner', 'top-left', '↖ Top Left', usageCorner)}
-            ${choiceButtonHTML('usage-corner', 'top-right', '↗ Top Right', usageCorner)}
-            ${choiceButtonHTML('usage-corner', 'bottom-left', '↙ Bottom Left', usageCorner)}
-            ${choiceButtonHTML('usage-corner', 'bottom-right', '↘ Bottom Right', usageCorner)}
+            ${choiceButtonHTML('usage-corner', 'top-left', 'â†– Top Left', usageCorner)}
+            ${choiceButtonHTML('usage-corner', 'top-right', 'â†— Top Right', usageCorner)}
+            ${choiceButtonHTML('usage-corner', 'bottom-left', 'â†™ Bottom Left', usageCorner)}
+            ${choiceButtonHTML('usage-corner', 'bottom-right', 'â†˜ Bottom Right', usageCorner)}
           </div>
           ${toggleRowHTML('avoidOverlap', 'Make room for other items', 'Sit beside chrome when there is room; under content if needed')}
           <div class="divider"></div>
@@ -973,7 +973,7 @@
           <div class="review-prompt" style="display: none;">
             <div class="divider"></div>
             <a class="review-link" href="${reviewUrl}" target="_blank" rel="noopener noreferrer">
-              ⭐ Enjoying this? Leave a Review
+              â­ Enjoying this? Leave a Review
             </a>
           </div>
         </div>
@@ -1100,10 +1100,10 @@
 
   // Initialize the pill UI
   function createPill() {
-    if (document.getElementById('hide-chatbar-pill-host')) return;
+    if (document.getElementById('better-gemini-pill-host')) return;
 
     hostElement = document.createElement('div');
-    hostElement.id = 'hide-chatbar-pill-host';
+    hostElement.id = 'better-gemini-pill-host';
 
     shadowRoot = hostElement.attachShadow({ mode: 'closed' });
 
@@ -1410,7 +1410,7 @@
 
   function syncBarHeight(bar) {
     if (!bar) return;
-    document.documentElement.style.setProperty('--hide-chatbar-bar-height', `${bar.offsetHeight}px`);
+    document.documentElement.style.setProperty('--better-gemini-bar-height', `${bar.offsetHeight}px`);
   }
 
   const barResizeObserver = new ResizeObserver(() => {
@@ -1439,17 +1439,17 @@
   function trackBar() {
     const bar = findBar();
     if (bar === barElement) {
-      if (bar && !bar.classList.contains('hide-chatbar-bar')) bar.classList.add('hide-chatbar-bar');
+      if (bar && !bar.classList.contains('better-gemini-bar')) bar.classList.add('better-gemini-bar');
       return false;
     }
 
     if (barElement) {
-      barElement.classList.remove('hide-chatbar-bar', 'hide-chatbar-revealed');
+      barElement.classList.remove('better-gemini-bar', 'better-gemini-revealed');
       barResizeObserver.unobserve(barElement);
     }
     barElement = bar;
     if (bar) {
-      bar.classList.add('hide-chatbar-bar');
+      bar.classList.add('better-gemini-bar');
       barResizeObserver.observe(bar);
       syncBarHeight(bar);
     }
@@ -1462,7 +1462,7 @@
   function updateDockState() {
     const bar = barElement;
     if (!bar || !bar.isConnected) {
-      document.body.classList.remove('hide-chatbar-docked');
+      document.body.classList.remove('better-gemini-docked');
       return;
     }
     if (isSliding() || marginIsGliding(bar)) return;
@@ -1475,21 +1475,21 @@
     let top = 0;
     let bottom = 0;
     try {
-      document.body.classList.add('hide-chatbar-measuring');
+      document.body.classList.add('better-gemini-measuring');
       const rect = bar.getBoundingClientRect();
       top = rect.top;
       bottom = rect.bottom;
-      document.body.classList.remove('hide-chatbar-measuring');
+      document.body.classList.remove('better-gemini-measuring');
       const distance = window.innerHeight - bottom;
       const height = bottom - top;
       // A docked composer sits low, close to the bottom edge, and is not a
       // tall page wrapper. The centered new-chat bar fails this test.
       const docked = height > 0 && height < window.innerHeight * 0.55 &&
         top > window.innerHeight * 0.35 && distance >= -40 && distance <= 140;
-      document.body.classList.toggle('hide-chatbar-docked', docked);
+      document.body.classList.toggle('better-gemini-docked', docked);
       void bar.offsetHeight;
     } finally {
-      document.body.classList.remove('hide-chatbar-measuring');
+      document.body.classList.remove('better-gemini-measuring');
       if (previousTransition) bar.style.setProperty('transition', previousTransition, previousPriority);
       else bar.style.removeProperty('transition');
     }
@@ -1504,17 +1504,17 @@
   }
 
   function barIsDocked() {
-    return document.body.classList.contains('hide-chatbar-docked');
+    return document.body.classList.contains('better-gemini-docked');
   }
 
   // Focus, a draft, click-to-open, or a hover hold means the bar is back in
   // its own space instead of floating over the conversation.
   function barCoversNaturally() {
     if (!barElement || !barIsDocked()) return false;
-    if (barElement.classList.contains('hide-chatbar-revealed')) return true;
+    if (barElement.classList.contains('better-gemini-revealed')) return true;
     if (barElement.matches(':focus-within')) return true;
     if (document.body.classList.contains('has-content')) return true;
-    return document.body.classList.contains('hide-chatbar-opened') && revealMode() === 'click';
+    return document.body.classList.contains('better-gemini-opened') && revealMode() === 'click';
   }
 
   // The strip at the very bottom of the screen, under the floating bar.
@@ -1849,7 +1849,7 @@
   let revealHoldTimer = null;
   function setHoverRevealed(on, immediate = false) {
     if (!barElement) return;
-    const revealed = barElement.classList.contains('hide-chatbar-revealed');
+    const revealed = barElement.classList.contains('better-gemini-revealed');
     if (on) {
       if (revealHoldTimer) {
         clearTimeout(revealHoldTimer);
@@ -1858,7 +1858,7 @@
       if (!revealed) {
         markSliding(0);
         armBottomFollow();
-        barElement.classList.add('hide-chatbar-revealed');
+        barElement.classList.add('better-gemini-revealed');
         followBottom(0);
       }
       return;
@@ -1872,7 +1872,7 @@
     if (immediate) {
       markSliding(hideFollowDelay());
       armBottomFollow();
-      barElement.classList.remove('hide-chatbar-revealed');
+      barElement.classList.remove('better-gemini-revealed');
       followBottom(hideFollowDelay());
       return;
     }
@@ -1882,7 +1882,7 @@
       if (!barElement) return;
       markSliding(hideFollowDelay());
       armBottomFollow();
-      barElement.classList.remove('hide-chatbar-revealed');
+      barElement.classList.remove('better-gemini-revealed');
       followBottom(hideFollowDelay());
     }, delay);
   }
@@ -1924,7 +1924,7 @@
       markSliding(0);
       armBottomFollow();
     }
-    document.body.classList.add('hide-chatbar-opened');
+    document.body.classList.add('better-gemini-opened');
     if (barIsDocked()) followBottom(0);
     const interactive = e.target instanceof Element &&
       e.target.closest('button, a, input, textarea, select, [contenteditable="true"], [role="button"]');
@@ -1956,7 +1956,7 @@
         if (overAction) return;
         markSliding(hideFollowDelay());
         armBottomFollow();
-        document.body.classList.remove('hide-chatbar-opened');
+        document.body.classList.remove('better-gemini-opened');
         followBottom(hideFollowDelay());
         return;
       }
@@ -1965,7 +1965,7 @@
         openBarFromPointer(e);
         return;
       }
-      document.body.classList.remove('hide-chatbar-opened');
+      document.body.classList.remove('better-gemini-opened');
     }, true);
   }
 
@@ -2128,12 +2128,12 @@
       <button type="button" class="usage-pill" data-kind="current" title="Opens Gemini usage limits" aria-label="Current usage">
         <span class="usage-dot"></span>
         <span class="usage-label">Current</span>
-        <span class="usage-pct">—</span>
+        <span class="usage-pct">â€”</span>
       </button>
       <button type="button" class="usage-pill" data-kind="weekly" title="Opens Gemini usage limits" aria-label="Weekly usage">
         <span class="usage-dot"></span>
         <span class="usage-label">Weekly</span>
-        <span class="usage-pct">—</span>
+        <span class="usage-pct">â€”</span>
       </button>
     `;
     usageShadowRoot.appendChild(usageStackElement);
@@ -2168,7 +2168,7 @@
       const metric = usageState[kind];
       const pctEl = btn.querySelector('.usage-pct');
       if (!metric) {
-        pctEl.textContent = '—';
+        pctEl.textContent = 'â€”';
         btn.className = 'usage-pill level-ok';
         btn.title = 'Usage data not available yet. Click to open Gemini usage limits.';
         continue;
@@ -2177,7 +2177,7 @@
       btn.className = `usage-pill ${levelClass(metric.percent)}`;
       const reset = formatReset(metric.resetEpoch);
       btn.title = reset
-        ? `${kind === 'current' ? 'Current' : 'Weekly'} usage · resets ${reset}. Click for details.`
+        ? `${kind === 'current' ? 'Current' : 'Weekly'} usage Â· resets ${reset}. Click for details.`
         : `${kind === 'current' ? 'Current' : 'Weekly'} usage. Click for details.`;
     }
     schedulePlacement();
@@ -2324,7 +2324,7 @@
     const approx = estimated ? '~' : '';
     contextElement.innerHTML =
       `<span class="bg-mark" title="Added by Better Gemini">Better Gemini</span>` +
-      `<span class="bg-sep">·</span>` +
+      `<span class="bg-sep">Â·</span>` +
       `<span class="bg-text">${approx}${formatTokens(tokens)} / ${formatTokens(limit)} context</span>`;
     placeContextLabel();
   }

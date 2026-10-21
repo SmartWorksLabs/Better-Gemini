@@ -36,4 +36,4 @@ If the way this extension handles information changes, this policy will be updat
 
 ## Contact
 
-Questions about this policy can be sent by opening an issue on the project page: [https://github.com/SmartWorksLabs/Hide-Chat-Bar-for-Gemini/issues](https://github.com/SmartWorksLabs/Hide-Chat-Bar-for-Gemini/issues).
+Questions about this policy can be sent by opening an issue on the project page: [https://github.com/SmartWorksLabs/Better-Gemini/issues](https://github.com/SmartWorksLabs/Better-Gemini/issues).

@@ -1,28 +1,28 @@
-/* Hide Chat Bar for Gemini - Content Styles */
+/* Better Gemini — content styles */
 
 /* content.js finds the chat bar (Gemini's .input-area-container) and tags it
-   with .hide-chatbar-bar, and keeps --hide-chatbar-bar-height up to date.
-   hide-chatbar-docked is added only when that bar sits at the bottom of an
+   with .better-gemini-bar, and keeps --better-gemini-bar-height up to date.
+   better-gemini-docked is added only when that bar sits at the bottom of an
    open chat. The new-chat screen is left in Gemini's own layout. */
 
-.hide-chatbar-enabled .hide-chatbar-bar {
+.better-gemini-enabled .better-gemini-bar {
   transition: opacity 0.15s ease !important;
 }
 
 /* Fade every chat bar. On the new-chat screen this is the only change, so
    the centered bar keeps its width, position, and model picker. */
-.hide-chatbar-active .hide-chatbar-bar {
-  opacity: var(--hide-chatbar-hidden-opacity, 0) !important;
-  transition: opacity 0.15s ease var(--hide-chatbar-hide-delay, 0ms) !important;
+.better-gemini-active .better-gemini-bar {
+  opacity: var(--better-gemini-hidden-opacity, 0) !important;
+  transition: opacity 0.15s ease var(--better-gemini-hide-delay, 0ms) !important;
 }
 
 /* Docked bar: give its space back to the conversation. Clicks pass through
    the hidden bar, so Copy, thumbs up/down, and redo stay usable.
-   hide-chatbar-measuring turns these overrides off for one layout read. */
-.hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring) .hide-chatbar-bar {
+   better-gemini-measuring turns these overrides off for one layout read. */
+.better-gemini-active.better-gemini-docked:not(.better-gemini-measuring) .better-gemini-bar {
   position: relative !important;
   z-index: 3 !important;
-  margin-top: calc(-1 * var(--hide-chatbar-bar-height, 0px)) !important;
+  margin-top: calc(-1 * var(--better-gemini-bar-height, 0px)) !important;
   background-color: inherit !important;
   pointer-events: none !important;
   /* Timing stays the same while the bar opens and closes. Changing it as the
@@ -33,7 +33,7 @@
 
 /* The conversation column is wider than the bar, so a backdrop in the page
    colour covers the text around the overlapping bar. It doesn't catch clicks. */
-.hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring) .hide-chatbar-bar::before {
+.better-gemini-active.better-gemini-docked:not(.better-gemini-measuring) .better-gemini-bar::before {
   content: '';
   position: absolute;
   inset: -20px -32px -16px;
@@ -47,33 +47,33 @@
 /* Shown again: focused, a draft, hover, or a click, depending on settings.
    Leave the timing alone here. Replacing it when the bar opens makes the
    conversation jump instead of gliding. */
-.hide-chatbar-active.hide-chatbar-reveal-hover .hide-chatbar-bar:hover,
-.hide-chatbar-active.hide-chatbar-opened .hide-chatbar-bar,
-.hide-chatbar-active .hide-chatbar-bar:focus-within,
-.hide-chatbar-active.has-content .hide-chatbar-bar,
-.hide-chatbar-active .hide-chatbar-bar.hide-chatbar-revealed {
+.better-gemini-active.better-gemini-reveal-hover .better-gemini-bar:hover,
+.better-gemini-active.better-gemini-opened .better-gemini-bar,
+.better-gemini-active .better-gemini-bar:focus-within,
+.better-gemini-active.has-content .better-gemini-bar,
+.better-gemini-active .better-gemini-bar.better-gemini-revealed {
   opacity: 1 !important;
 }
 
 /* A docked bar that is actually open eases back into its own space. The
    conversation glides up with it. Don't retune the transition here. */
-.hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring) .hide-chatbar-bar.hide-chatbar-revealed,
-.hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring).hide-chatbar-opened .hide-chatbar-bar,
-.hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring) .hide-chatbar-bar:focus-within,
-.hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring).has-content .hide-chatbar-bar {
+.better-gemini-active.better-gemini-docked:not(.better-gemini-measuring) .better-gemini-bar.better-gemini-revealed,
+.better-gemini-active.better-gemini-docked:not(.better-gemini-measuring).better-gemini-opened .better-gemini-bar,
+.better-gemini-active.better-gemini-docked:not(.better-gemini-measuring) .better-gemini-bar:focus-within,
+.better-gemini-active.better-gemini-docked:not(.better-gemini-measuring).has-content .better-gemini-bar {
   margin-top: 0 !important;
   pointer-events: auto !important;
   opacity: 1 !important;
 }
 
-.hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring) .hide-chatbar-bar.hide-chatbar-revealed::before,
-.hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring).hide-chatbar-opened .hide-chatbar-bar::before,
-.hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring) .hide-chatbar-bar:focus-within::before,
-.hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring).has-content .hide-chatbar-bar::before {
+.better-gemini-active.better-gemini-docked:not(.better-gemini-measuring) .better-gemini-bar.better-gemini-revealed::before,
+.better-gemini-active.better-gemini-docked:not(.better-gemini-measuring).better-gemini-opened .better-gemini-bar::before,
+.better-gemini-active.better-gemini-docked:not(.better-gemini-measuring) .better-gemini-bar:focus-within::before,
+.better-gemini-active.better-gemini-docked:not(.better-gemini-measuring).has-content .better-gemini-bar::before {
   content: none;
 }
 
-/* Context window line — matches Gemini's disclaimer size/color, with a quiet
+/* Context window line â€” matches Gemini's disclaimer size/color, with a quiet
    "Better Gemini" mark so it is clear this is not a native Gemini label. */
 .better-gemini-context {
   position: fixed;

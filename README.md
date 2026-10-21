@@ -27,7 +27,7 @@ Clicking the toolbar icon explains this and offers a link to Gemini. It does not
 
 ### Icons
 
-There is one logo, `icons/hide-chat-bar-for-gemini-logo.png`, with a transparent background. `scripts/generate_icons.py` trims its transparent border and resizes it into `icon16.png`, `icon32.png`, `icon48.png`, and `icon128.png`.
+There is one logo, `icons/better-gemini-logo.png`, with a transparent background. `scripts/generate_icons.py` trims its transparent border and resizes it into `icon16.png`, `icon32.png`, `icon48.png`, and `icon128.png`.
 
 ```bash
 pip install Pillow
@@ -43,10 +43,15 @@ python3 scripts/generate_icons.py
 ├── popup.html         # Toolbar icon explanation
 ├── popup.css
 ├── content.js         # Chat bar, settings, usage pills, context line
-├── content.css        # Hide/reveal styles and context line
+├── content.css        # Chat bar and context line styles
 ├── icons/
+│   ├── better-gemini-logo.png
+│   └── icon{16,32,48,128}.png
 ├── store/             # Listing images (not packaged)
+│   ├── better-gemini-store-icon.png
+│   └── better-gemini-screenshot-{1,2}.png
 ├── scripts/
+│   └── generate_icons.py
 ├── PRIVACY.md
 ├── LICENSE
 └── README.md
@@ -56,7 +61,7 @@ python3 scripts/generate_icons.py
 
 ### Chat bar
 
-`content.js` finds Gemini's chat bar (`.input-area-container`), tags it with `.hide-chatbar-bar`, and keeps its height in `--hide-chatbar-bar-height`. The pull-up layout applies only when the bar is docked at the bottom of an open chat. On the new-chat screen the composer stays in Gemini's own layout.
+`content.js` finds Gemini's chat bar (`.input-area-container`), tags it with `.better-gemini-bar`, and keeps its height in `--better-gemini-bar-height`. The pull-up layout applies only when the bar is docked at the bottom of an open chat. On the new-chat screen the composer stays in Gemini's own layout.
 
 ### Usage
 
@@ -107,10 +112,15 @@ The extension only runs on gemini.google.com, where it customizes the chat UI an
 
 **Privacy tab**
 
-- Privacy policy: `https://github.com/SmartWorksLabs/Hide-Chat-Bar-for-Gemini/blob/main/PRIVACY.md`
+- Privacy policy: `https://github.com/SmartWorksLabs/Better-Gemini/blob/main/PRIVACY.md`
 - Check **Website content** (draft detection; token metadata already in Gemini responses)
 - Check **User activity** (type anywhere; usage RPC using the user’s session)
 - Leave personal communications, web history, location, and PII unchecked
+
+**Store assets**
+
+- Store icon: `store/better-gemini-store-icon.png`
+- Screenshots: `store/better-gemini-screenshot-1.png` and `-2.png`
 
 ## License
 

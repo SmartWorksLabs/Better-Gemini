@@ -2,12 +2,12 @@
 
 Run from the repo root: python3 scripts/generate_icons.py
 
-icons/hide-chat-bar-for-gemini-logo.png -> icons/icon{size}.png
-                                        -> store/hide-chat-bar-for-gemini-store-icon.png
+icons/better-gemini-logo.png -> icons/icon{size}.png
+                             -> store/better-gemini-store-icon.png
 """
 from PIL import Image, ImageDraw
 
-SOURCE = 'icons/hide-chat-bar-for-gemini-logo.png'
+SOURCE = 'icons/better-gemini-logo.png'
 # 16 and 32 are the toolbar sizes (32 for high-resolution screens),
 # 48 is used on the extensions page, 128 in the Chrome Web Store.
 SIZES = (16, 32, 48, 128)
@@ -15,7 +15,7 @@ SIZES = (16, 32, 48, 128)
 # The store listing icon is uploaded separately in the developer dashboard, so
 # it can sit on a rounded tile while the installed icons stay transparent.
 # Google's guidelines: 128x128 canvas, 96x96 artwork, 16px transparent padding.
-STORE_ICON = 'store/hide-chat-bar-for-gemini-store-icon.png'
+STORE_ICON = 'store/better-gemini-store-icon.png'
 STORE_SIZE = 128
 STORE_TILE = 96
 STORE_RADIUS = 22
