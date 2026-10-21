@@ -104,11 +104,41 @@
     return thread;
   }
 
+  function persistableThread(src) {
+    // chrome.storage cannot hold DOM nodes — keep html/text only on disk.
+    const out = {
+      updatedAt: src.updatedAt || Date.now(),
+      activeBranchId: src.activeBranchId,
+      ownerBranchId: src.ownerBranchId || src.geminiTipBranchId || src.activeBranchId,
+      geminiTipBranchId: src.geminiTipBranchId || src.ownerBranchId || src.activeBranchId,
+      serverTip: src.serverTip ? { ...src.serverTip } : null,
+      forks: src.forks ? JSON.parse(JSON.stringify(src.forks)) : {},
+      branches: {}
+    };
+    Object.keys(src.branches || {}).forEach((id) => {
+      const b = src.branches[id];
+      if (!b) return;
+      out.branches[id] = {
+        id: b.id,
+        parentId: b.parentId || null,
+        forkAt: b.forkAt || 0,
+        tip: b.tip ? { ...b.tip } : null,
+        messages: (b.messages || []).map((m) => ({
+          role: m.role,
+          text: typeof m.text === 'string' ? m.text : '',
+          html: typeof m.html === 'string' ? m.html : ''
+        })),
+        updatedAt: b.updatedAt || Date.now()
+      };
+    });
+    return out;
+  }
+
   async function saveThread() {
     if (!chatId || !thread || !hasForks(thread)) return;
     const all = await storageGet();
     thread.updatedAt = Date.now();
-    all[chatId] = thread;
+    all[chatId] = persistableThread(thread);
     const ids = Object.keys(all).sort((a, b) => (all[a].updatedAt || 0) - (all[b].updatedAt || 0));
     while (ids.length > MAX_CHATS) delete all[ids.shift()];
     await storageSet(all);
@@ -275,15 +305,37 @@
         null
       );
     }
-    // Prefer the full reply shell (tables, code, math, lists live here),
-    // not a nested .markdown fragment that can miss pieces.
-    return (
-      el.querySelector('message-content') ||
-      el.querySelector('.markdown-main-panel') ||
-      el.querySelector('.model-response-text') ||
-      el.querySelector('.markdown') ||
-      null
+    // Prefer the richest reply shell that still includes Gemini table/code chrome
+    // (scroll wrappers, table-block, etc.). Nested .markdown alone loses that.
+    const candidates = [
+      el.querySelector('.model-response-text'),
+      el.querySelector('message-content'),
+      el.querySelector('.markdown-main-panel'),
+      el.querySelector('[class*="response-content"]'),
+      el.querySelector('.markdown')
+    ].filter(Boolean);
+    if (!candidates.length) return null;
+    const rich = candidates.find((c) =>
+      c.querySelector(
+        'table, .table-block, [class*="table-block"], [class*="horizontal-scroll"], ' +
+          'pre, code-block, .code-block, [class*="code-block"], math, .math-block'
+      )
     );
+    // Prefer the outermost candidate that still contains the rich node.
+    if (rich) {
+      let best = rich;
+      for (const c of candidates) {
+        if (c !== rich && c.contains(rich)) best = c;
+      }
+      return best;
+    }
+    return candidates[0];
+  }
+
+  function stripTimelineBits(root) {
+    if (!root || !root.querySelectorAll) return root;
+    root.querySelectorAll('.bg-timeline-controls').forEach((n) => n.remove());
+    return root;
   }
 
   function textOf(el) {
@@ -297,34 +349,93 @@
     return cleanMessageText(clone.innerText || clone.textContent || '');
   }
 
+  /** Snapshot Gemini's content root as OUTER html so wrappers/classes stay intact. */
   function htmlOf(el) {
     if (!el) return '';
     const role = roleOf(el);
     const box = contentBox(el, role);
     if (!box) return '';
-    const clone = box.cloneNode(true);
-    clone.querySelectorAll('.bg-timeline-controls').forEach((n) => n.remove());
+    const clone = stripTimelineBits(box.cloneNode(true));
     try {
-      return clone.innerHTML || '';
+      return clone.outerHTML || '';
     } catch (_) {
-      return '';
+      try {
+        return clone.innerHTML || '';
+      } catch (__) {
+        return '';
+      }
     }
   }
 
-  /** Restore Gemini's own HTML into a content box (no innerHTML write — Trusted Types safe). */
-  function fillBoxFromHtml(box, html) {
-    if (!box || !html) return false;
+  function cloneContentNode(el, role) {
+    const box = contentBox(el, role);
+    if (!box) return null;
+    return stripTimelineBits(box.cloneNode(true));
+  }
+
+  function parseGeminiHtml(html) {
+    if (!html) return null;
     try {
-      const parsed = new DOMParser().parseFromString(
+      const trimmed = String(html).trim();
+      // Outer snapshot of a single root element (message-content, etc.).
+      if (trimmed.startsWith('<')) {
+        const parsed = new DOMParser().parseFromString(trimmed, 'text/html');
+        if (parsed.body && parsed.body.firstElementChild) {
+          return stripTimelineBits(parsed.body.firstElementChild);
+        }
+      }
+      // Legacy innerHTML snapshots from older versions.
+      const wrapped = new DOMParser().parseFromString(
         `<div data-bg-root="1">${html}</div>`,
         'text/html'
       );
-      const root = parsed.querySelector('[data-bg-root]');
-      if (!root) return false;
+      const root = wrapped.querySelector('[data-bg-root]');
+      return root || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /** Restore Gemini markup by replacing the content root — keeps native wrappers. */
+  function fillBoxFromHtml(box, html) {
+    if (!box || !html) return false;
+    try {
+      const incoming = parseGeminiHtml(html);
+      if (!incoming) return false;
+      const parent = box.parentNode;
+      if (!parent) return false;
+
+      // Same tag → replace the whole root (preserves Gemini classes on the host).
+      if (incoming.dataset && incoming.dataset.bgRoot === '1') {
+        while (box.firstChild) box.removeChild(box.firstChild);
+        Array.from(incoming.childNodes).forEach((n) => {
+          box.appendChild(document.importNode(n, true));
+        });
+        return true;
+      }
+
+      if (incoming.tagName && box.tagName && incoming.tagName === box.tagName) {
+        const node =
+          incoming.ownerDocument === document
+            ? incoming.cloneNode(true)
+            : document.importNode(incoming, true);
+        parent.replaceChild(node, box);
+        return true;
+      }
+
+      // Tag mismatch (legacy inner snapshot): fill children only.
       while (box.firstChild) box.removeChild(box.firstChild);
-      Array.from(root.childNodes).forEach((n) => {
-        box.appendChild(document.importNode(n, true));
-      });
+      if (incoming.dataset && incoming.dataset.bgRoot === '1') {
+        Array.from(incoming.childNodes).forEach((n) => {
+          box.appendChild(document.importNode(n, true));
+        });
+      } else {
+        box.appendChild(
+          incoming.ownerDocument === document
+            ? incoming.cloneNode(true)
+            : document.importNode(incoming, true)
+        );
+      }
       return true;
     } catch (_) {
       return false;
@@ -332,11 +443,25 @@
   }
 
   function setNativeContent(el, role, payload) {
+    if (!el || !payload) return false;
     const box = contentBox(el, role);
     if (!box) return false;
-    // Prefer exact HTML snapshot so wrapping, spacing, and markup stay Gemini's.
-    if (payload && payload.html && fillBoxFromHtml(box, payload.html)) return true;
-    if (payload && typeof payload.text === 'string') {
+
+    // In-memory DOM clone is the highest fidelity (no HTML round-trip).
+    if (payload.node && payload.node.nodeType === 1) {
+      const parent = box.parentNode;
+      if (parent) {
+        const node = stripTimelineBits(payload.node.cloneNode(true));
+        parent.replaceChild(node, box);
+        return true;
+      }
+    }
+
+    if (payload.html && fillBoxFromHtml(box, payload.html)) return true;
+
+    // Never textContent-wipe rich model replies — that destroys tables/code.
+    if (role === 'model') return false;
+    if (typeof payload.text === 'string') {
       box.textContent = payload.text;
       return true;
     }
@@ -350,18 +475,30 @@
       if (!role) continue;
       const text = textOf(el);
       const html = htmlOf(el);
+      const node = cloneContentNode(el, role);
       if (!text && !html && role === 'model') continue;
-      out.push({ role, text, html });
+      out.push({ role, text, html, node });
     }
     return out;
   }
 
   function snapshotMessages(list) {
-    return (list || []).map((m) => ({
-      role: m.role,
-      text: typeof m.text === 'string' ? m.text : '',
-      html: typeof m.html === 'string' ? m.html : ''
-    }));
+    // Keep an in-memory DOM clone when present (not written to chrome.storage).
+    return (list || []).map((m) => {
+      const snap = {
+        role: m.role,
+        text: typeof m.text === 'string' ? m.text : '',
+        html: typeof m.html === 'string' ? m.html : ''
+      };
+      if (m.node && m.node.nodeType === 1) {
+        try {
+          snap.node = stripTimelineBits(m.node.cloneNode(true));
+        } catch (_) {
+          /* ignore */
+        }
+      }
+      return snap;
+    });
   }
 
   function isEditModeOpen() {
