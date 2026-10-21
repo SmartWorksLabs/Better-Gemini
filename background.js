@@ -24,9 +24,14 @@ chrome.runtime.onInstalled.addListener((details) => {
         chrome.storage.sync.set({ showTimelines: true });
       }
     });
-    // v1.2.6: store HTML snapshots so version switch keeps Gemini wrapping.
-    chrome.storage.local.remove(['betterGeminiTimelines']);
-    chrome.storage.local.set({ betterGeminiTimelinesVersion: 6 });
+    // v1.2.7: nested branch history — wipe older timeline schemas once.
+    chrome.storage.local.get(['betterGeminiTimelinesVersion'], (result) => {
+      const ver = result && result.betterGeminiTimelinesVersion;
+      if (ver !== 7) {
+        chrome.storage.local.remove(['betterGeminiTimelines']);
+        chrome.storage.local.set({ betterGeminiTimelinesVersion: 7 });
+      }
+    });
   }
   // Older versions stored a theme flag and an unused reveal counter.
   chrome.storage.local.remove(['darkTheme', 'interactionsCount']);

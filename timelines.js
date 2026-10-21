@@ -10,9 +10,9 @@
   const BRIDGE_SRC = 'better-gemini-bridge';
   const STORE_KEY = 'betterGeminiTimelines';
   const OVERLAY_ID = 'better-gemini-timeline-overlay';
-  const STORE_VERSION = 6;
+  const STORE_VERSION = 7;
   const MAX_CHATS = 40;
-  const MAX_BRANCHES_PER_CHAT = 24;
+  const MAX_BRANCHES_PER_CHAT = 48;
 
   let enabled = true;
   let thread = null;
@@ -114,6 +114,7 @@
     return {
       updatedAt: Date.now(),
       activeBranchId: branchId,
+      geminiTipBranchId: branchId,
       serverTip: null,
       forks: {},
       branches: {
@@ -127,6 +128,33 @@
         }
       }
     };
+  }
+
+  /** Point every fork that listed `fromId` at `toId` instead (nested history stays linked). */
+  function remapBranchId(fromId, toId) {
+    if (!thread || !fromId || !toId || fromId === toId) return;
+    Object.keys(thread.forks || {}).forEach((key) => {
+      const fork = thread.forks[key];
+      if (!fork || !fork.branchIds) return;
+      fork.branchIds = fork.branchIds.map((id) => (id === fromId ? toId : id));
+      const seen = new Set();
+      fork.branchIds = fork.branchIds.filter((id) => {
+        if (!id || !thread.branches[id] || seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      });
+    });
+  }
+
+  /** When a path is selected, mark that id active on every fork that contains it. */
+  function alignForksToBranch(branchId) {
+    if (!thread || !branchId) return;
+    Object.keys(thread.forks || {}).forEach((key) => {
+      const fork = thread.forks[key];
+      if (!fork || !fork.branchIds) return;
+      const idx = fork.branchIds.indexOf(branchId);
+      if (idx >= 0) fork.activeIndex = idx;
+    });
   }
 
   function ensureThread() {
@@ -163,10 +191,17 @@
     });
   }
 
-  function turnNodes() {
-    return Array.from(document.querySelectorAll('user-query, model-response')).filter(
-      (n) => n && n.isConnected && !n.dataset.bgTimelineClone
-    );
+  function turnNodes(opts = {}) {
+    const includeClones = Boolean(opts.includeClones);
+    return Array.from(document.querySelectorAll('user-query, model-response')).filter((n) => {
+      if (!n || !n.isConnected) return false;
+      if (!includeClones && n.dataset.bgTimelineClone) return false;
+      return true;
+    });
+  }
+
+  function countUserTurns(messages) {
+    return (messages || []).filter((m) => m && m.role === 'user').length;
   }
 
   function roleOf(el) {
@@ -343,68 +378,96 @@
 
   function restoreLiveView() {
     scrubLegacyArtifacts();
+    document.querySelectorAll('[data-bg-timeline-clone]').forEach((n) => n.remove());
+    document.querySelectorAll('[data-bg-timeline-hide], .bg-timeline-hidden').forEach((n) => {
+      n.classList.remove('bg-timeline-hidden');
+      n.style.display = '';
+      delete n.dataset.bgTimelineHide;
+    });
     if (liveDomBackup && liveDomBackup.length) {
-      const nodes = turnNodes();
+      const nodes = turnNodes({ includeClones: false });
       for (let i = 0; i < Math.min(nodes.length, liveDomBackup.length); i++) {
         setNativeContent(nodes[i], liveDomBackup[i].role, liveDomBackup[i]);
+      }
+      for (let i = liveDomBackup.length; i < nodes.length; i++) {
+        nodes[i].style.display = 'none';
+        nodes[i].dataset.bgTimelineHide = '1';
       }
     }
     liveDomBackup = null;
     viewingAlternate = false;
   }
 
+  /** Grow the chat DOM so a saved branch with more turns can be shown in Gemini shells. */
+  function ensureSlotsForMessages(msgs) {
+    document.querySelectorAll('[data-bg-timeline-hide]').forEach((n) => {
+      n.style.display = '';
+      delete n.dataset.bgTimelineHide;
+    });
+
+    let nodes = turnNodes({ includeClones: true });
+    if (!msgs.length) return nodes;
+
+    const userTpl = nodes.find((n) => roleOf(n) === 'user');
+    const modelTpl = nodes.find((n) => roleOf(n) === 'model') || userTpl;
+    if (!userTpl) return nodes;
+    const parent = userTpl.parentNode;
+    if (!parent) return nodes;
+
+    while (nodes.length < msgs.length) {
+      const role = msgs[nodes.length].role === 'model' ? 'model' : 'user';
+      const tpl = role === 'model' ? modelTpl : userTpl;
+      if (!tpl) break;
+      const clone = tpl.cloneNode(true);
+      clone.dataset.bgTimelineClone = '1';
+      clone.style.display = '';
+      clone.classList.remove('bg-timeline-hidden');
+      clone.querySelectorAll('.bg-timeline-controls').forEach((n) => n.remove());
+      const box = contentBox(clone, role);
+      if (box) while (box.firstChild) box.removeChild(box.firstChild);
+      parent.appendChild(clone);
+      nodes = turnNodes({ includeClones: true });
+    }
+
+    return turnNodes({ includeClones: true });
+  }
+
+  /** Paint an entire saved branch into Gemini's message shells (keeps nested history). */
   function applyBranchInChat(forkAt, branch) {
     const msgs = snapshotMessages(branch.messages || []);
     if (!msgs.length) return;
 
-    let base = turnNodes();
-    if (!base.length) return;
-
-    if (!viewingAlternate) {
-      liveDomBackup = base.map((n) => ({
+    const nativeOnly = turnNodes({ includeClones: false });
+    if (!viewingAlternate && nativeOnly.length) {
+      liveDomBackup = nativeOnly.map((n) => ({
         role: roleOf(n),
         text: textOf(n),
         html: htmlOf(n)
       }));
     }
 
-    scrubLegacyArtifacts();
-    base = turnNodes();
-    if (liveDomBackup && liveDomBackup.length) {
-      for (let i = 0; i < Math.min(base.length, liveDomBackup.length); i++) {
-        setNativeContent(base[i], liveDomBackup[i].role, liveDomBackup[i]);
-      }
-      base = turnNodes();
+    // Drop prior clones, then rebuild slots for this branch's full transcript.
+    document.querySelectorAll('[data-bg-timeline-clone]').forEach((n) => n.remove());
+    document.querySelectorAll('[data-bg-timeline-hide], .bg-timeline-hidden').forEach((n) => {
+      n.classList.remove('bg-timeline-hidden');
+      n.style.display = '';
+      delete n.dataset.bgTimelineHide;
+    });
+
+    const nodes = ensureSlotsForMessages(msgs);
+    for (let i = 0; i < msgs.length && i < nodes.length; i++) {
+      nodes[i].style.display = '';
+      delete nodes[i].dataset.bgTimelineHide;
+      setNativeContent(nodes[i], msgs[i].role || roleOf(nodes[i]), msgs[i]);
     }
-
-    const userNodes = base.filter((n) => roleOf(n) === 'user');
-    const forkUser = userNodes[Math.min(Math.max(0, forkAt), Math.max(0, userNodes.length - 1))];
-    const forkIndex = forkUser ? base.indexOf(forkUser) : 0;
-
-    let userSeen = -1;
-    let msgStart = 0;
-    for (let i = 0; i < msgs.length; i++) {
-      if (msgs[i].role === 'user') {
-        userSeen++;
-        if (userSeen === forkAt) {
-          msgStart = i;
-          break;
-        }
-      }
-    }
-    const slice = msgs.slice(msgStart);
-
-    let mi = 0;
-    for (let ni = forkIndex; ni < base.length && mi < slice.length; ni++, mi++) {
-      setNativeContent(base[ni], slice[mi].role || roleOf(base[ni]), slice[mi]);
-    }
-
-    for (let ni = forkIndex + slice.length; ni < base.length; ni++) {
-      base[ni].style.display = 'none';
-      base[ni].dataset.bgTimelineHide = '1';
+    for (let i = msgs.length; i < nodes.length; i++) {
+      nodes[i].style.display = 'none';
+      nodes[i].dataset.bgTimelineHide = '1';
     }
 
     viewingAlternate = true;
+    clearMessageFocusChrome();
+    void forkAt;
   }
 
   async function syncActiveFromDom() {
@@ -414,11 +477,8 @@
     const t = ensureThread();
     const branch = activeBranch();
     if (!branch) return;
-    const forkKeys = Object.keys(t.forks);
-    let onLive = !forkKeys.length;
-    for (const key of forkKeys) {
-      if (liveBranchId(t.forks[key]) === branch.id) onLive = true;
-    }
+    const tipId = t.geminiTipBranchId || liveBranchId(t.forks[Object.keys(t.forks)[0]]);
+    const onLive = !Object.keys(t.forks).length || branch.id === tipId;
     if (!onLive && !pendingEdit) return;
 
     const msgs = liveBuffer.length ? liveBuffer : scrapeMessages();
@@ -434,10 +494,17 @@
     if (!enabled || !chatId) return;
     if (!meta || !meta.isEdit) return;
 
-    restoreLiveView();
     const t = ensureThread();
-    const freeze = bestFreezeMessages();
+    // Freeze BEFORE restoring live DOM so an alternate view isn't lost.
+    let freeze = bestFreezeMessages();
+    if (viewingAlternate) {
+      const shown = activeBranch();
+      if (shown && shown.messages && shown.messages.length) {
+        freeze = snapshotMessages(shown.messages);
+      }
+    }
     preEditFreeze = null;
+    restoreLiveView();
 
     let userOrd = userTurnIndexFromPrompt(meta.prompt, freeze);
     if (userOrd < 0) {
@@ -447,25 +514,28 @@
     const msgIndex = messagesToUserOrdinal(freeze, userOrd);
     const forkAt = userOrd;
 
-    const oldId = t.activeBranchId;
-    const oldBranch = t.branches[oldId] || {
-      id: oldId,
-      parentId: null,
-      forkAt: 0,
-      tip: t.serverTip,
-      messages: freeze,
+    // Snapshot the path being left into a dedicated id so siblings are never overwritten.
+    const parentId = t.activeBranchId;
+    const abandonedId = uid('b');
+    t.branches[abandonedId] = {
+      id: abandonedId,
+      parentId: parentId,
+      forkAt,
+      tip: t.serverTip ? { ...t.serverTip } : null,
+      messages: snapshotMessages(freeze),
       updatedAt: Date.now()
     };
-    if (freeze.length) oldBranch.messages = snapshotMessages(freeze);
-    if (!oldBranch.tip && t.serverTip) oldBranch.tip = { ...t.serverTip };
-    t.branches[oldId] = oldBranch;
+
+    // Point every fork that referenced the tip we left at this frozen snapshot instead.
+    // That keeps nested ‹n/m› controls wired to the same path when you switch back.
+    remapBranchId(parentId, abandonedId);
 
     const newId = uid('b');
     const prefix = snapshotMessages(msgIndex >= 0 ? freeze.slice(0, msgIndex) : freeze.slice());
     const newPrompt = cleanMessageText(meta.prompt || '');
     t.branches[newId] = {
       id: newId,
-      parentId: oldId,
+      parentId: abandonedId,
       forkAt,
       tip: null,
       messages: newPrompt
@@ -474,15 +544,29 @@
       updatedAt: Date.now()
     };
     t.activeBranchId = newId;
+    t.geminiTipBranchId = newId;
 
     const key = String(forkAt);
     const fork = t.forks[key] || { branchIds: [], activeIndex: 0 };
-    if (!fork.branchIds.includes(oldId)) fork.branchIds.push(oldId);
-    fork.branchIds = fork.branchIds.filter((id) => id !== newId).concat([newId]);
+    // Keep every surviving sibling; ensure abandoned + new are present (no duplicates).
+    const kept = (fork.branchIds || []).filter(
+      (id) => id && t.branches[id] && id !== newId && id !== abandonedId
+    );
+    if (!kept.includes(abandonedId)) kept.push(abandonedId);
+    kept.push(newId);
+    fork.branchIds = kept;
     fork.activeIndex = fork.branchIds.length - 1;
     t.forks[key] = fork;
 
-    pendingEdit = { forkAt, newId, oldId };
+    // Never delete downstream forks — nested versions stay until the chat is cleared.
+    Object.keys(t.forks).forEach((fk) => {
+      const f = t.forks[fk];
+      if (!f || !f.branchIds) return;
+      f.branchIds = f.branchIds.filter((id) => id && t.branches[id]);
+    });
+
+    alignForksToBranch(newId);
+    pendingEdit = { forkAt, newId, oldId: abandonedId };
     await saveThread();
     bridgePost('clear-tip-override', {});
     schedulePaint();
@@ -522,11 +606,21 @@
 
     t.activeBranchId = branchId;
     fork.activeIndex = fork.branchIds.indexOf(branchId);
+    alignForksToBranch(branchId);
 
-    const liveId = liveBranchId(fork);
-    if (branchId === liveId) {
+    const geminiTip = t.geminiTipBranchId || liveBranchId(fork);
+    if (branchId === geminiTip && liveDomBackup) {
       bridgePost('clear-tip-override', {});
       restoreLiveView();
+    } else if (branchId === geminiTip && !liveDomBackup) {
+      bridgePost('clear-tip-override', {});
+      // Gemini DOM already is this tip — just clear alternate decorations.
+      document.querySelectorAll('[data-bg-timeline-clone]').forEach((n) => n.remove());
+      document.querySelectorAll('[data-bg-timeline-hide]').forEach((n) => {
+        n.style.display = '';
+        delete n.dataset.bgTimelineHide;
+      });
+      viewingAlternate = false;
     } else {
       if (branch.tip && branch.tip.responseId) {
         bridgePost('set-tip-override', { tip: branch.tip });
@@ -547,18 +641,30 @@
     }
 
     const t = thread;
-    const userNodes = turnNodes().filter((n) => roleOf(n) === 'user' && n.style.display !== 'none');
+    const userNodes = turnNodes({ includeClones: true }).filter(
+      (n) => roleOf(n) === 'user' && n.style.display !== 'none'
+    );
     const keep = new Set();
+    const visibleUserCount = userNodes.length;
 
     Object.keys(t.forks).forEach((key) => {
       const forkAt = Number(key);
       const fork = t.forks[key];
       if (!fork || !fork.branchIds || fork.branchIds.length < 2) return;
-      const host = userNodes[forkAt] || turnNodes().filter((n) => roleOf(n) === 'user')[forkAt];
+      // Only show a fork control when that user turn exists on the path on screen
+      // (nested later forks reappear when you switch back to a longer branch).
+      if (forkAt >= visibleUserCount) return;
+      const host = userNodes[forkAt];
       if (!host) return;
 
+      // Drop ids that were deleted; never drop surviving siblings.
+      fork.branchIds = fork.branchIds.filter((id) => id && t.branches[id]);
+      if (fork.branchIds.length < 2) return;
+
       const total = fork.branchIds.length;
-      const idx = Math.max(0, Math.min(fork.activeIndex || 0, total - 1));
+      let idx = fork.branchIds.indexOf(t.activeBranchId);
+      if (idx < 0) idx = Math.max(0, Math.min(fork.activeIndex || 0, total - 1));
+      fork.activeIndex = idx;
       keep.add(key);
 
       let row =
@@ -612,6 +718,46 @@
     });
   }
 
+  /** Keep ‹ › from taking focus — focus inside user-query draws Gemini's bubble outline. */
+  function onControlsMouseDown(event) {
+    const btn = event.target && event.target.closest && event.target.closest('.bg-timeline-btn');
+    if (!btn) return;
+    event.preventDefault();
+  }
+
+  function clearMessageFocusChrome() {
+    try {
+      const ae = document.activeElement;
+      if (ae && ae.closest && (ae.closest('user-query') || ae.closest('.bg-timeline-controls'))) {
+        ae.blur();
+      }
+    } catch (_) {
+      /* ignore */
+    }
+    document.querySelectorAll('user-query').forEach((uq) => {
+      uq.classList.remove(
+        'focused',
+        'cdk-focused',
+        'cdk-mouse-focused',
+        'cdk-program-focused',
+        'cdk-keyboard-focused'
+      );
+      const bubble = uq.querySelector(
+        '.user-query-bubble-with-background, .user-query-bubble-container, [class*="user-query-bubble"]'
+      );
+      if (bubble) {
+        bubble.classList.remove(
+          'focused',
+          'cdk-focused',
+          'cdk-mouse-focused',
+          'cdk-program-focused'
+        );
+        bubble.style.outline = '';
+        bubble.style.boxShadow = '';
+      }
+    });
+  }
+
   function onControlsClick(event) {
     const btn = event.target && event.target.closest && event.target.closest('.bg-timeline-btn');
     if (!btn || !enabled || !thread) return;
@@ -631,6 +777,8 @@
     else if (dir === 'next' && idx < fork.branchIds.length - 1) {
       selectBranch(forkAt, fork.branchIds[idx + 1]);
     }
+    // Drop focus after the swap so Gemini doesn't leave a focus ring on the bubble.
+    requestAnimationFrame(() => clearMessageFocusChrome());
   }
 
   function schedulePaint() {
@@ -647,7 +795,15 @@
   }
 
   function noteEditModeOpen() {
-    if (!enabled || !chatId || viewingAlternate) return;
+    if (!enabled || !chatId) return;
+    // If an alternate version is on screen, freeze THAT branch's stored transcript.
+    if (viewingAlternate) {
+      const shown = activeBranch();
+      if (shown && shown.messages && shown.messages.length) {
+        preEditFreeze = snapshotMessages(shown.messages);
+        return;
+      }
+    }
     refreshLiveBuffer();
     const msgs = liveBuffer.length ? snapshotMessages(liveBuffer) : snapshotMessages(scrapeMessages());
     if (msgs.length) preEditFreeze = msgs;
@@ -802,6 +958,7 @@
     }
 
     await loadEnabled();
+    document.addEventListener('mousedown', onControlsMouseDown, true);
     document.addEventListener('click', onControlsClick, true);
     document.addEventListener(
       'click',
