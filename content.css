@@ -264,7 +264,7 @@ body.dark-theme .better-gemini-usage.level-danger,
   color: #f2b8b5;
 }
 
-/* ---- Message versions (Claude-style < n / m >) ---- */
+/* ---- Message versions: controls only — never restyle Gemini messages ---- */
 
 .bg-timeline-hidden {
   display: none !important;
@@ -274,8 +274,7 @@ body.dark-theme .better-gemini-usage.level-danger,
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-left: 8px;
-  vertical-align: middle;
+  margin: 4px 0 0;
   user-select: none;
   font-family: "Google Sans", "Google Sans Text", Roboto, Arial, Helvetica, sans-serif;
   font-size: 13px;
@@ -322,45 +321,4 @@ body.dark-theme .bg-timeline-btn:hover:not(:disabled) {
 
 body.dark-theme .bg-timeline-count {
   color: #e8eaed;
-}
-
-.bg-timeline-replay {
-  margin: 12px 0;
-  padding: 12px 16px;
-  border-radius: 16px;
-  max-width: 100%;
-  box-sizing: border-box;
-  font-family: "Google Sans", "Google Sans Text", Roboto, Arial, Helvetica, sans-serif;
-  font-size: 15px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.bg-timeline-replay.bg-timeline-user {
-  background: #f0f4f9;
-  color: #1f1f1f;
-}
-
-body.dark-theme .bg-timeline-replay.bg-timeline-user {
-  background: #2d2e31;
-  color: #e8eaed;
-}
-
-.bg-timeline-replay.bg-timeline-model {
-  background: transparent;
-  color: inherit;
-  padding-left: 4px;
-}
-
-.bg-timeline-replay-label {
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  opacity: 0.55;
-  margin-bottom: 6px;
-}
-
-.bg-timeline-replay-body {
-  color: inherit;
 }

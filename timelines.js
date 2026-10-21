@@ -1,6 +1,7 @@
 /* Better Gemini — Claude-style parallel message versions in the same chat.
-   Snapshots abandoned branches locally on edit; switches UI in place; asks the
-   page-world bridge to parent the next continue off the selected tip (Option A). */
+   Snapshots abandoned branches locally on edit; switches by rewriting text
+   inside Gemini's own message elements (no custom bubbles). Continues are
+   re-parented onto the selected tip via the page-world bridge (Option A). */
 (function () {
   'use strict';
 
@@ -11,9 +12,11 @@
   const MAX_BRANCHES_PER_CHAT = 24;
 
   let enabled = true;
-  let thread = null; // in-memory thread for the open chat
+  let thread = null;
   let chatId = null;
-  let pendingEdit = null; // { forkAt, prompt, oldBranchId, snapshot }
+  let pendingEdit = null;
+  let viewingAlternate = false;
+  let liveDomBackup = null; // [{ role, text }] snapshot of native DOM before alternate apply
   let paintScheduled = false;
   let syncTimer = null;
   let bridgeReqId = 0;
@@ -21,20 +24,6 @@
 
   function bridgePost(type, extra = {}) {
     window.postMessage({ source: BRIDGE_CMD, type, ...extra }, window.location.origin);
-  }
-
-  function bridgeRequest(type, extra = {}) {
-    const id = ++bridgeReqId;
-    return new Promise((resolve) => {
-      bridgeWaiters.set(id, resolve);
-      bridgePost(type, { id, ...extra });
-      setTimeout(() => {
-        if (bridgeWaiters.has(id)) {
-          bridgeWaiters.delete(id);
-          resolve(null);
-        }
-      }, 12000);
-    });
   }
 
   function uid(prefix) {
@@ -107,14 +96,16 @@
 
   async function saveThread() {
     if (!chatId || !thread) return;
+    // Never persist empty placeholder threads.
+    if (!Object.keys(thread.forks || {}).length && Object.keys(thread.branches || {}).length <= 1) {
+      const only = thread.branches && thread.branches[thread.activeBranchId];
+      if (!only || !only.messages || !only.messages.length) return;
+    }
     const all = await storageGet();
     thread.updatedAt = Date.now();
     all[chatId] = thread;
-    // Prune oldest chats when over cap.
     const ids = Object.keys(all).sort((a, b) => (all[a].updatedAt || 0) - (all[b].updatedAt || 0));
-    while (ids.length > MAX_CHATS) {
-      delete all[ids.shift()];
-    }
+    while (ids.length > MAX_CHATS) delete all[ids.shift()];
     await storageSet(all);
   }
 
@@ -144,15 +135,24 @@
   }
 
   function activeBranch() {
-    const t = ensureThread();
-    return t.branches[t.activeBranchId] || null;
+    if (!thread) return null;
+    return thread.branches[thread.activeBranchId] || null;
   }
 
-  // ---- DOM turns -----------------------------------------------------------
+  function hasForks(t) {
+    if (!t || !t.forks) return false;
+    return Object.keys(t.forks).some((k) => {
+      const f = t.forks[k];
+      return f && f.branchIds && f.branchIds.length >= 2;
+    });
+  }
+
+  // ---- DOM turns (Gemini native elements only) ----------------------------
 
   function turnNodes() {
-    const nodes = Array.from(document.querySelectorAll('user-query, model-response'));
-    return nodes.filter((n) => n && n.isConnected && !n.closest('.bg-timeline-replay'));
+    return Array.from(document.querySelectorAll('user-query, model-response')).filter(
+      (n) => n && n.isConnected && !n.classList.contains('bg-timeline-clone')
+    );
   }
 
   function roleOf(el) {
@@ -162,20 +162,70 @@
     return null;
   }
 
+  function cleanMessageText(raw) {
+    let t = String(raw || '').replace(/\s+\n/g, '\n').trim();
+    // Gemini puts screen-reader prefixes in the same text tree.
+    t = t.replace(/^(You said|Gemini said|Model said)\s+/i, '');
+    // Drop duplicated "You said … / …" lines from bad prior scrapes.
+    const lines = t.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+    if (lines.length >= 2) {
+      const a = lines[0].replace(/^(You said)\s+/i, '');
+      const b = lines[1].replace(/^(You said)\s+/i, '');
+      if (a === b) t = a;
+    }
+    return t.trim();
+  }
+
+  function textContainer(el, role) {
+    if (!el) return null;
+    if (role === 'user') {
+      return (
+        el.querySelector('.query-text') ||
+        el.querySelector('.user-query-bubble-with-background') ||
+        el.querySelector('[class*="query-text"]') ||
+        el.querySelector('.query-content') ||
+        null
+      );
+    }
+    return (
+      el.querySelector('message-content') ||
+      el.querySelector('.markdown') ||
+      el.querySelector('.model-response-text') ||
+      el.querySelector('[data-message-content]') ||
+      null
+    );
+  }
+
   function textOf(el) {
     if (!el) return '';
-    const preferred =
-      el.querySelector('.query-text') ||
-      el.querySelector('.markdown') ||
-      el.querySelector('[data-message-content]') ||
-      el.querySelector('.model-response-text') ||
-      el;
-    return (preferred.innerText || preferred.textContent || '').replace(/\s+\n/g, '\n').trim();
+    const role = roleOf(el);
+    const box = textContainer(el, role) || el;
+    // Prefer visible text; skip elements marked for assistive tech when possible.
+    const clone = box.cloneNode(true);
+    clone.querySelectorAll('[aria-hidden="true"], .sr-only, .cdk-visually-hidden').forEach((n) => n.remove());
+    return cleanMessageText(clone.innerText || clone.textContent || '');
+  }
+
+  function setTurnText(el, role, text) {
+    const clean = cleanMessageText(text);
+    const box = textContainer(el, role);
+    if (!box) return false;
+    // Trusted Types: no innerHTML — replace with a plain text node tree.
+    clearChildren(box);
+    if (role === 'user') {
+      box.textContent = clean;
+    } else {
+      const p = document.createElement('p');
+      p.textContent = clean;
+      box.appendChild(p);
+    }
+    return true;
   }
 
   function scrapeMessages() {
     const out = [];
     for (const el of turnNodes()) {
+      if (el.classList.contains('bg-timeline-hidden')) continue;
       const role = roleOf(el);
       if (!role) continue;
       const text = textOf(el);
@@ -187,7 +237,7 @@
 
   function userTurnIndexFromPrompt(prompt) {
     if (!prompt) return -1;
-    const needle = String(prompt).trim();
+    const needle = cleanMessageText(prompt);
     const users = turnNodes().filter((n) => roleOf(n) === 'user');
     for (let i = users.length - 1; i >= 0; i--) {
       const t = textOf(users[i]);
@@ -212,35 +262,33 @@
   // ---- Branch ops ----------------------------------------------------------
 
   async function syncActiveFromDom() {
-    if (!enabled || !chatId) return;
+    if (!enabled || !chatId || viewingAlternate) return;
+    // Only track chats that already have versions, or an edit in flight.
+    if (!pendingEdit && (!thread || !hasForks(thread))) return;
     const t = ensureThread();
     const branch = activeBranch();
     if (!branch) return;
-    // Don't clobber a frozen alternate view with live Gemini DOM.
-    if (branch.tip && t.serverTip && branch.tip.responseId && t.serverTip.responseId
-      && branch.tip.responseId !== t.serverTip.responseId
-      && document.querySelector('.bg-timeline-replay')) {
-      return;
-    }
     const msgs = scrapeMessages();
     if (!msgs.length) return;
-    branch.messages = msgs;
+    branch.messages = msgs.map((m) => ({ role: m.role, text: cleanMessageText(m.text) }));
     branch.updatedAt = Date.now();
     if (t.serverTip) branch.tip = { ...t.serverTip };
-    await saveThread();
+    if (hasForks(t) || pendingEdit) await saveThread();
     schedulePaint();
   }
 
   async function onEditDetected(meta) {
     if (!enabled || !chatId) return;
+    // Require a real edit action from the bridge.
+    if (!meta || !meta.isEdit) return;
+
     const t = ensureThread();
-    const live = scrapeMessages();
+    const live = scrapeMessages().map((m) => ({ role: m.role, text: cleanMessageText(m.text) }));
     const sourceMsgs = (activeBranch() && activeBranch().messages && activeBranch().messages.length)
-      ? activeBranch().messages.slice()
+      ? activeBranch().messages.map((m) => ({ role: m.role, text: cleanMessageText(m.text) }))
       : live.slice();
 
-    // forkAt = user-turn ordinal (0 = first user message), matching Claude's control seat.
-    let userOrd = userTurnIndexFromPrompt(meta && meta.prompt);
+    let userOrd = userTurnIndexFromPrompt(meta.prompt);
     if (userOrd < 0) {
       const users = sourceMsgs.filter((m) => m.role === 'user');
       userOrd = Math.max(0, users.length - 1);
@@ -248,7 +296,6 @@
     const msgIndex = messagesToUserOrdinal(sourceMsgs, userOrd);
     const forkAt = userOrd;
 
-    // Freeze current path as the abandoned branch (keeps old prompt + replies).
     const oldId = t.activeBranchId;
     const oldBranch = t.branches[oldId] || {
       id: oldId,
@@ -264,15 +311,13 @@
 
     const newId = uid('b');
     const prefix = msgIndex >= 0 ? sourceMsgs.slice(0, msgIndex) : sourceMsgs.slice();
-    const newPrompt = (meta && meta.prompt) || '';
+    const newPrompt = cleanMessageText(meta.prompt || '');
     t.branches[newId] = {
       id: newId,
       parentId: oldId,
       forkAt,
       tip: null,
-      messages: newPrompt
-        ? prefix.concat([{ role: 'user', text: newPrompt }])
-        : prefix.slice(),
+      messages: newPrompt ? prefix.concat([{ role: 'user', text: newPrompt }]) : prefix.slice(),
       updatedAt: Date.now()
     };
     t.activeBranchId = newId;
@@ -284,10 +329,8 @@
     fork.activeIndex = fork.branchIds.indexOf(newId);
     t.forks[key] = fork;
 
-    // Cap branches.
     const bIds = Object.keys(t.branches);
     if (bIds.length > MAX_BRANCHES_PER_CHAT) {
-      // Drop oldest non-active, non-referenced lightly.
       bIds.sort((a, b) => (t.branches[a].updatedAt || 0) - (t.branches[b].updatedAt || 0));
       while (Object.keys(t.branches).length > MAX_BRANCHES_PER_CHAT) {
         const drop = bIds.shift();
@@ -297,46 +340,43 @@
     }
 
     pendingEdit = { forkAt, newId, oldId };
+    viewingAlternate = false;
+    liveDomBackup = null;
+    restoreNativeDom();
     await saveThread();
-    // New path is what Gemini will show — clear any tip override.
     bridgePost('clear-tip-override', {});
     schedulePaint();
   }
 
   async function onSendDetected(meta) {
-    if (!enabled || !chatId) return;
-    const t = ensureThread();
-    const branch = activeBranch();
-    if (!branch) return;
-    if (meta && meta.rewritten) {
-      // Continue landed on the selected tip — trust upcoming stream tip.
-    }
-    // After a normal send, Gemini DOM is source of truth once reply finishes.
+    if (!enabled || !chatId || !thread) return;
+    if (!hasForks(thread) && !pendingEdit) return;
     setTimeout(() => syncActiveFromDom(), 800);
-    setTimeout(() => syncActiveFromDom(), 2500);
+    setTimeout(() => {
+      pendingEdit = null;
+      syncActiveFromDom();
+    }, 2500);
     await saveThread();
   }
 
   async function onTip(tip) {
-    if (!tip || !chatId) return;
-    const t = ensureThread();
-    t.serverTip = tip;
+    if (!tip || !chatId || !thread) return;
+    thread.serverTip = tip;
     const branch = activeBranch();
     if (branch) {
       branch.tip = { ...tip };
       branch.updatedAt = Date.now();
-      // Keep the override tip advancing with each continue on this version so
-      // the next send still parents off this branch (Option A).
-      if (document.querySelector('.bg-timeline-replay') || pendingEdit) {
+      if (viewingAlternate || pendingEdit) {
         bridgePost('set-tip-override', { tip });
       }
     }
-    await saveThread();
+    if (hasForks(thread) || pendingEdit) await saveThread();
     schedulePaint();
   }
 
   async function selectBranch(forkAt, branchId) {
-    const t = ensureThread();
+    const t = thread;
+    if (!t) return;
     const fork = t.forks[String(forkAt)];
     if (!fork || !fork.branchIds.includes(branchId)) return;
     const branch = t.branches[branchId];
@@ -350,45 +390,63 @@
     const isLiveServerPath = Boolean(branchTip && serverId && branchTip === serverId);
 
     if (isLiveServerPath) {
+      viewingAlternate = false;
       bridgePost('clear-tip-override', {});
-      clearReplay();
+      restoreNativeDom();
     } else {
-      // Always paint the stored path so switching is visible even if tip
-      // capture missed — tip override is best-effort for live continue.
       if (branchTip) bridgePost('set-tip-override', { tip: branch.tip });
       else bridgePost('clear-tip-override', {});
-      paintReplay(forkAt, branch);
+      applyBranchInPlace(forkAt, branch);
     }
 
     await saveThread();
     schedulePaint();
   }
 
-  // ---- Replay overlay (same chat, alternate version on screen) ------------
+  // ---- In-place apply using Gemini's own message elements -----------------
 
-  function clearReplay() {
-    document.querySelectorAll('.bg-timeline-replay').forEach((n) => n.remove());
+  function restoreNativeDom() {
+    document.querySelectorAll('.bg-timeline-clone').forEach((n) => n.remove());
     document.querySelectorAll('.bg-timeline-hidden').forEach((n) => {
       n.classList.remove('bg-timeline-hidden');
     });
+    // Remove any leftover custom replay nodes from older builds.
+    document.querySelectorAll('.bg-timeline-replay').forEach((n) => n.remove());
+
+    if (liveDomBackup && liveDomBackup.length) {
+      const nodes = turnNodes();
+      for (let i = 0; i < Math.min(nodes.length, liveDomBackup.length); i++) {
+        setTurnText(nodes[i], liveDomBackup[i].role, liveDomBackup[i].text);
+      }
+    }
+    liveDomBackup = null;
+    viewingAlternate = false;
   }
 
-  function paintReplay(forkAt, branch) {
-    clearReplay();
+  function applyBranchInPlace(forkAt, branch) {
     const nodes = turnNodes();
     const userNodes = nodes.filter((n) => roleOf(n) === 'user');
     if (!userNodes.length) return;
     const forkUser = userNodes[Math.min(Math.max(0, forkAt), userNodes.length - 1)];
     if (!forkUser) return;
 
-    // Hide native turns from the forked user message onward.
-    let hiding = false;
-    for (const n of nodes) {
-      if (n === forkUser) hiding = true;
-      if (hiding) n.classList.add('bg-timeline-hidden');
+    // Backup whatever Gemini is showing now (the live path) once.
+    if (!viewingAlternate) {
+      liveDomBackup = scrapeMessages();
     }
+    viewingAlternate = true;
 
-    const msgs = branch.messages || [];
+    // Drop prior clones; unhide everything before re-applying.
+    document.querySelectorAll('.bg-timeline-clone').forEach((n) => n.remove());
+    document.querySelectorAll('.bg-timeline-hidden').forEach((n) => {
+      n.classList.remove('bg-timeline-hidden');
+    });
+    document.querySelectorAll('.bg-timeline-replay').forEach((n) => n.remove());
+
+    const msgs = (branch.messages || []).map((m) => ({
+      role: m.role,
+      text: cleanMessageText(m.text)
+    }));
     let userSeen = -1;
     let start = 0;
     for (let i = 0; i < msgs.length; i++) {
@@ -401,46 +459,66 @@
       }
     }
     const slice = msgs.slice(start);
-    const host = forkUser.parentElement || forkUser;
-    let insertAfter = forkUser;
 
-    for (const msg of slice) {
-      const el = document.createElement('div');
-      el.className = `bg-timeline-replay bg-timeline-${msg.role}`;
-      el.setAttribute('data-bg-role', msg.role);
-      const label = document.createElement('div');
-      label.className = 'bg-timeline-replay-label';
-      label.textContent = msg.role === 'user' ? 'You' : 'Gemini';
-      const body = document.createElement('div');
-      body.className = 'bg-timeline-replay-body';
-      body.textContent = msg.text || '';
-      el.appendChild(label);
-      el.appendChild(body);
-      if (insertAfter.parentNode) {
-        insertAfter.parentNode.insertBefore(el, insertAfter.nextSibling);
-      } else {
-        host.appendChild(el);
-      }
-      insertAfter = el;
+    // Map fork user → index in full native list.
+    const forkIndex = nodes.indexOf(forkUser);
+    if (forkIndex < 0) return;
+
+    // Hide native turns from the fork onward (live path underneath).
+    for (let i = forkIndex; i < nodes.length; i++) {
+      nodes[i].classList.add('bg-timeline-hidden');
+    }
+
+    // Clone Gemini's own elements so styling stays native.
+    const userTemplate = userNodes[0];
+    const modelTemplate = nodes.find((n) => roleOf(n) === 'model') || null;
+    const parent = forkUser.parentNode;
+    if (!parent) return;
+
+    // Insert clones before the hidden live fork user (order preserved).
+    const anchor = forkUser;
+    for (let i = 0; i < slice.length; i++) {
+      const msg = slice[i];
+      const template = msg.role === 'user' ? userTemplate : modelTemplate;
+      if (!template) continue;
+      const clone = template.cloneNode(true);
+      clone.classList.add('bg-timeline-clone');
+      clone.classList.remove('bg-timeline-hidden');
+      clone.querySelectorAll('.bg-timeline-controls').forEach((n) => n.remove());
+      setTurnText(clone, msg.role, msg.text);
+      parent.insertBefore(clone, anchor);
     }
   }
 
-  // ---- Version control UI -------------------------------------------------
+  // ---- Version control UI (only the < n / m > chrome) ---------------------
 
   function ensureControls() {
-    if (!enabled || !thread) {
+    if (!enabled || !thread || !hasForks(thread)) {
       document.querySelectorAll('.bg-timeline-controls').forEach((n) => n.remove());
       return;
     }
     const t = thread;
-    const userNodes = turnNodes().filter((n) => roleOf(n) === 'user');
+    const userNodes = turnNodes().filter((n) => roleOf(n) === 'user' && !n.classList.contains('bg-timeline-hidden'));
+    // Prefer visible user turns; fall back to all (including hidden live ones).
+    const hosts = userNodes.length
+      ? userNodes
+      : turnNodes().filter((n) => roleOf(n) === 'user');
     const keep = new Set();
 
     Object.keys(t.forks).forEach((key) => {
       const forkAt = Number(key);
       const fork = t.forks[key];
       if (!fork || !fork.branchIds || fork.branchIds.length < 2) return;
-      const host = userNodes[forkAt];
+
+      // Attach controls to the visible clone of that user turn when alternate,
+      // otherwise the native user turn.
+      let host = null;
+      const clones = Array.from(document.querySelectorAll('user-query.bg-timeline-clone'));
+      if (viewingAlternate && clones.length) {
+        host = clones[0];
+      } else {
+        host = hosts[forkAt] || turnNodes().filter((n) => roleOf(n) === 'user')[forkAt];
+      }
       if (!host) return;
 
       const total = fork.branchIds.length;
@@ -457,7 +535,6 @@
         row.setAttribute('role', 'group');
         row.setAttribute('aria-label', 'Message versions');
         row.dataset.forkAt = key;
-        // Keep inside the user turn so lookups stay stable across paints.
         host.appendChild(row);
       }
       row.dataset.forkAt = key;
@@ -467,7 +544,6 @@
       let next = row.querySelector('.bg-timeline-btn[data-dir="next"]');
 
       if (!prev || !label || !next) {
-        // Never use innerHTML — Gemini enforces Trusted Types.
         clearChildren(row);
         prev = document.createElement('button');
         prev.type = 'button';
@@ -542,31 +618,23 @@
     const next = conversationId();
     if (next === chatId) return;
     chatId = next;
-    clearReplay();
+    viewingAlternate = false;
+    liveDomBackup = null;
     pendingEdit = null;
+    restoreNativeDom();
     bridgePost('clear-tip-override', {});
+    document.querySelectorAll('.bg-timeline-controls').forEach((n) => n.remove());
     if (!chatId) {
       thread = null;
       return;
     }
     await loadThread(chatId);
-    if (!thread) thread = emptyThread();
-    // Re-apply tip override if viewing a non-server branch.
-    const branch = activeBranch();
-    if (branch && branch.tip && thread.serverTip
-      && branch.tip.responseId !== thread.serverTip.responseId) {
-      bridgePost('set-tip-override', { tip: branch.tip });
-      const forkKeys = Object.keys(thread.forks);
-      for (const key of forkKeys) {
-        const fork = thread.forks[key];
-        if (fork && fork.branchIds[fork.activeIndex] === branch.id) {
-          paintReplay(Number(key), branch);
-          break;
-        }
-      }
+    // Do not invent empty threads for chats that were never edited.
+    if (thread && hasForks(thread)) {
+      schedulePaint();
+    } else {
+      thread = null;
     }
-    schedulePaint();
-    syncActiveFromDom();
   }
 
   function watchBridge() {
@@ -598,23 +666,22 @@
     const obs = new MutationObserver(() => {
       if (!enabled) return;
       schedulePaint();
+      if (viewingAlternate) return;
       if (syncTimer) clearTimeout(syncTimer);
       syncTimer = setTimeout(() => syncActiveFromDom(), 600);
 
-      // Snapshot while the editor is open so the abandoned path is frozen
-      // even if the edit RPC shape changes and we miss the network event.
       const editing = document.querySelector('user-query.edit-mode, user-query[class*="edit"]');
       if (editing && chatId) {
-        const t = ensureThread();
+        const t = thread || ensureThread();
         const branch = activeBranch();
         const msgs = scrapeMessages();
         if (branch && msgs.length) {
-          branch.messages = msgs;
+          branch.messages = msgs.map((m) => ({ role: m.role, text: cleanMessageText(m.text) }));
           if (t.serverTip) branch.tip = { ...t.serverTip };
         }
       }
     });
-    obs.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+    obs.observe(document.documentElement, { childList: true, subtree: true });
 
     setInterval(() => {
       onChatChanged();
@@ -652,12 +719,11 @@
         if (area === 'sync' && changes.showTimelines) {
           enabled = changes.showTimelines.newValue !== false;
           if (!enabled) {
-            clearReplay();
+            restoreNativeDom();
             document.querySelectorAll('.bg-timeline-controls').forEach((n) => n.remove());
             bridgePost('clear-tip-override', {});
           } else {
             schedulePaint();
-            syncActiveFromDom();
           }
         }
       });
@@ -665,11 +731,28 @@
   }
 
   async function init() {
+    // Wipe older timeline data that used custom bubbles / "You said" scrapes.
+    if (extAlive()) {
+      try {
+        chrome.storage.local.get(['betterGeminiTimelinesVersion'], (result) => {
+          if (chrome.runtime.lastError) return;
+          if (result.betterGeminiTimelinesVersion !== 2) {
+            chrome.storage.local.remove([STORE_KEY], () => {
+              chrome.storage.local.set({ betterGeminiTimelinesVersion: 2 });
+            });
+            thread = null;
+          }
+        });
+      } catch (_) { /* ignore */ }
+    }
+
     await loadEnabled();
     document.addEventListener('click', onControlsClick, true);
     watchSettings();
     watchBridge();
     watchDom();
+    // Clean any leftover custom nodes from the previous build immediately.
+    restoreNativeDom();
     await onChatChanged();
   }
 
