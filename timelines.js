@@ -796,6 +796,30 @@
     schedulePaint();
   }
 
+  function branchHasContent(branch) {
+    if (!branch || !branch.messages || !branch.messages.length) return false;
+    return branch.messages.some((m) => m && ((m.text && m.text.trim()) || (m.html && m.html.trim())));
+  }
+
+  function recoverBranchMessages(branch, otherBranch) {
+    if (branchHasContent(branch)) return true;
+    // Prefer last-good transcript when it differs from the other version on screen.
+    const candidates = [lastGoodTranscript, liveBuffer, otherBranch && otherBranch.messages];
+    for (const cand of candidates) {
+      if (!cand || !cand.length) continue;
+      if (otherBranch && branchHasContent(otherBranch)) {
+        const otherText = (otherBranch.messages || []).map((m) => m.text || '').join('\n');
+        const candText = cand.map((m) => m.text || '').join('\n');
+        if (candText && candText === otherText) continue;
+      }
+      if (cand.some((m) => m && ((m.text && m.text.trim()) || (m.html && m.html.trim())))) {
+        setBranchMessages(branch, cand);
+        return branchHasContent(branch);
+      }
+    }
+    return false;
+  }
+
   async function selectBranch(forkAt, branchId) {
     const t = thread;
     if (!t) return;
@@ -808,7 +832,14 @@
     // Freeze the branch we're leaving so its reply never bleeds into the other.
     commitActiveBranch();
 
-    if (!(branch.messages && branch.messages.length)) {
+    const leaving = t.branches[t.activeBranchId];
+    if (!branchHasContent(branch)) {
+      recoverBranchMessages(branch, leaving);
+    }
+    if (!branchHasContent(branch) && branchId === ownerIdOf(t)) {
+      captureDomIntoBranch(branchId);
+    }
+    if (!branchHasContent(branch)) {
       console.warn('[Better Gemini] cannot switch — version has no saved content');
       schedulePaint();
       return;
@@ -956,13 +987,6 @@
     });
   }
 
-  /** Keep ‹ › from taking focus — focus inside user-query draws Gemini's bubble outline. */
-  function onControlsMouseDown(event) {
-    const btn = event.target && event.target.closest && event.target.closest('.bg-timeline-btn');
-    if (!btn) return;
-    event.preventDefault();
-  }
-
   function clearMessageFocusChrome() {
     try {
       const ae = document.activeElement;
@@ -1005,9 +1029,14 @@
     });
   }
 
-  function onControlsClick(event) {
+  let lastControlNavAt = 0;
+
+  /** Use pointerdown in capture phase — Gemini often swallows click inside user-query. */
+  function onControlsPointerDown(event) {
+    if (event.button != null && event.button !== 0) return;
     const btn = event.target && event.target.closest && event.target.closest('.bg-timeline-btn');
     if (!btn || !enabled || !thread) return;
+    if (btn.disabled) return;
     const row = btn.closest('.bg-timeline-controls');
     if (!row) return;
 
@@ -1015,16 +1044,26 @@
     event.stopPropagation();
     if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
 
+    // pointerdown + click both fire — only navigate once.
+    const now = Date.now();
+    if (now - lastControlNavAt < 400) return;
+    lastControlNavAt = now;
+
     const forkAt = Number(row.dataset.forkAt);
     const fork = thread.forks[String(forkAt)];
     if (!fork || !fork.branchIds || fork.branchIds.length < 2) return;
-    const idx = Math.max(0, Math.min(fork.activeIndex || 0, fork.branchIds.length - 1));
+
+    // Prefer activeBranchId so the label and the click target stay in sync.
+    let idx = fork.branchIds.indexOf(thread.activeBranchId);
+    if (idx < 0) idx = Math.max(0, Math.min(fork.activeIndex || 0, fork.branchIds.length - 1));
+    fork.activeIndex = idx;
+
     const dir = btn.dataset.dir;
-    if (dir === 'prev' && idx > 0) selectBranch(forkAt, fork.branchIds[idx - 1]);
-    else if (dir === 'next' && idx < fork.branchIds.length - 1) {
+    if (dir === 'prev' && idx > 0) {
+      selectBranch(forkAt, fork.branchIds[idx - 1]);
+    } else if (dir === 'next' && idx < fork.branchIds.length - 1) {
       selectBranch(forkAt, fork.branchIds[idx + 1]);
     }
-    // Drop focus after the swap so Gemini doesn't leave a focus ring on the bubble.
     requestAnimationFrame(() => clearMessageFocusChrome());
   }
 
@@ -1234,8 +1273,8 @@
     }
 
     await loadEnabled();
-    document.addEventListener('mousedown', onControlsMouseDown, true);
-    document.addEventListener('click', onControlsClick, true);
+    document.addEventListener('pointerdown', onControlsPointerDown, true);
+    document.addEventListener('click', onControlsPointerDown, true);
     document.addEventListener(
       'click',
       (e) => {

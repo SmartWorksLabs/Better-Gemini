@@ -326,6 +326,14 @@ body.dark-theme .bg-timeline-controls {
   font-size: 16px;
   line-height: 1;
   outline: none;
+  pointer-events: auto !important;
+  position: relative;
+  z-index: 6;
+}
+
+.bg-timeline-controls,
+.bg-timeline-btn {
+  pointer-events: auto !important;
 }
 
 .bg-timeline-btn:focus,
