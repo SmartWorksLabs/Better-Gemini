@@ -1,6 +1,6 @@
 # Better Gemini
 
-Customize [gemini.google.com](https://gemini.google.com): hide the chat input bar until you need it, see your Current and Weekly usage limits up front, and track how full this chat’s context window is. A **Better Gemini** button on the page is where you change how that works. This extension is not made by Google and is not affiliated with Google.
+Customize [gemini.google.com](https://gemini.google.com): hide the chat input bar until you need it, see your Current and Weekly usage limits up front, track how full this chat’s context window is, and keep **parallel message versions** when you edit an earlier prompt (Claude-style `< n / m >` in the same chat). A **Better Gemini** button on the page is where you change how that works. This extension is not made by Google and is not affiliated with Google.
 
 Clicking the toolbar icon explains this and offers a link to Gemini. It does not change settings. Settings are on the Gemini page.
 
@@ -11,7 +11,8 @@ Clicking the toolbar icon explains this and offers a link to Gemini. It does not
 - **Smart reveal**: Hover or click modes, optional hide delay, drafts stay open, type-anywhere to chat
 - **Usage tracker**: Two small pills show **Current** and **Weekly** usage from the same numbers as Gemini → Settings → Usage limits. Color shifts toward warning/danger as you near the limit. Click a pill to open Gemini’s usage page
 - **Context window**: A quiet line under the chat bar (disclaimer-sized type) shows tokens used vs the plan limit, marked **Better Gemini** so it is clear it is not a native Gemini label. Color shifts as the window fills
-- **Configurable**: Turn usage and/or context on or off from the on-page menu
+- **Message versions**: When you edit an earlier prompt, keep the old path and switch with `< n / m >` in the same chat. Continuing on a version rewrites the next send so Gemini parents off that tip (going forward only; stored locally on your device)
+- **Configurable**: Turn usage, context, and message versions on or off from the on-page menu
 - **Stays out of the way**: Floating controls prefer sitting **beside** other chrome when there is room; if that would sit on scrolling chat text, they stack under instead
 
 ## Installation
@@ -39,11 +40,12 @@ python3 scripts/generate_icons.py
 ```
 ├── manifest.json      # Name, description, and permissions
 ├── background.js      # Saves default settings on install
-├── bridge.js          # Page-world helper: usage RPC + token metadata
+├── bridge.js          # Page-world helper: usage RPC, token metadata, tip rewrite
 ├── popup.html         # Toolbar icon explanation
 ├── popup.css
 ├── content.js         # Chat bar, settings, usage pills, context line
-├── content.css        # Chat bar and context line styles
+├── timelines.js       # Parallel message versions (local store + UI)
+├── content.css        # Chat bar, context line, version controls
 ├── icons/
 │   ├── better-gemini-logo.png
 │   └── icon{16,32,48,128}.png
@@ -77,7 +79,9 @@ Preferences are stored in `chrome.storage.sync`:
 
 - `corner`, `hiddenOpacity`, `revealMode`, `typeToChat`, `avoidOverlap`
 - `hideDelayEnabled`, `hideDelayMs`, `hideDelayUnit`, `pillStyle`
-- `showUsage`, `showContext`, `firstInstalledDate`
+- `showUsage`, `showContext`, `showTimelines`, `firstInstalledDate`
+
+Message-version trees are stored in `chrome.storage.local` (`betterGeminiTimelines`), keyed by Gemini chat id, and never sent to SmartWorksLabs.
 
 A short usage snapshot may be cached in `chrome.storage.local` for faster display. See [PRIVACY.md](PRIVACY.md).
 

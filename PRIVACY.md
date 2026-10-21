@@ -12,7 +12,9 @@ This policy describes how the extension handles information. It does not send th
 
 **Context window counts, used only on the page.** When the context window display is on, the extension reads token counts that Gemini already returns in its own responses (`usageMetadata`), and may estimate from visible text until the first exact count arrives. Counts are kept in memory for the current chat only. They are not saved to sync storage and are not sent to SmartWorksLabs.
 
-**Text in the Gemini chat box, used only on the page.** On gemini.google.com, the extension checks whether the chat box has any text, so the bar can stay open while you are writing. It does not read your existing conversation for any other purpose, it does not save the draft, and it does not send the draft anywhere.
+**Text in the Gemini chat box, used only on the page.** On gemini.google.com, the extension checks whether the chat box has any text, so the bar can stay open while you are writing. It does not save the draft, and it does not send the draft anywhere.
+
+**Message versions (optional), stored only on your device.** When **Message versions** is on, the extension keeps alternate conversation paths locally in `chrome.storage.local` so you can switch between them after editing an earlier prompt (Claude-style). That includes message text for those versions, keyed to the Gemini chat id. Versions are only captured for edits that happen while the feature is on; older edits cannot be recovered. This data stays on your device, is not synced by this extension to SmartWorksLabs, and is removed if you clear the extension’s data or uninstall it. You can turn the feature off from the Better Gemini button on the page.
 
 **Keys you type and text you paste, used only on the page.** Type anywhere to chat is on by default. When it is on, a letter, number, or symbol you type outside a text box is placed into the Gemini chat box. Pasting outside a text box does the same with the pasted text. Shortcuts that use Ctrl, Cmd, or Alt, and the space bar, are left alone. The key or pasted text is not saved and is not sent anywhere. You can turn this off from the Better Gemini button on the page.
 
@@ -24,7 +26,7 @@ The review link opens this extension's page on the Chrome Web Store. Leaving a r
 
 ## How long information stays
 
-Settings stay in Chrome until you change them, clear the extension's data, or uninstall it. The local usage cache is overwritten on each refresh and is removed when you clear the extension's data or uninstall. Uninstalling removes the extension's stored settings from that browser.
+Settings stay in Chrome until you change them, clear the extension's data, or uninstall it. The local usage cache is overwritten on each refresh and is removed when you clear the extension's data or uninstall. Message-version history stays on the device until you clear the extension's data or uninstall. Uninstalling removes the extension's stored settings and local timeline data from that browser.
 
 ## Limited use
 

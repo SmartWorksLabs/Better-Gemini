@@ -172,17 +172,258 @@
     return /gemini\.google\.com|BatchExecute|batchexecute|GenerateContent|StreamGenerate|BardChatUi/i.test(u);
   }
 
+  // ---- Parallel timelines (Option A): tip rewrite in the same chat ----
+  // Gemini continues from conversation tuple [c_id, r_id, rc_id]. After an
+  // edit, we keep abandoned tips locally and rewrite the next continue so it
+  // parents off the version the user is viewing — same chat URL, no new chat.
+  const ACTION_EDIT = 2;
+  const CONV_INDEX = 2;
+  const ACTION_INDEX = 72;
+  const RPC_READ_CHAT = 'hNvQHb';
+
+  let tipOverride = null; // { conversationId, responseId, choiceId } | null
+  let lastServerTip = null;
+  let lastEditAt = 0;
+
+  function conversationIdFromPath() {
+    const m = location.pathname.match(/\/(?:app|c)\/([0-9a-f]+)/i);
+    return m ? `c_${m[1]}` : null;
+  }
+
+  function lastMatch(text, re) {
+    let last = null;
+    let m;
+    const copy = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
+    while ((m = copy.exec(text))) last = m;
+    return last;
+  }
+
+  function extractIdsFromText(text) {
+    if (!text || typeof text !== 'string') return null;
+    // Prefer the last ids in a stream — those are the tip of the new turn.
+    const c = lastMatch(text, /\bc_([0-9a-f]{8,})\b/i);
+    const r = lastMatch(text, /\br_([0-9a-f]{8,})\b/i);
+    const rc = lastMatch(text, /\brc_([0-9a-f]{8,})\b/i);
+    if (!r && !rc) return null;
+    return {
+      conversationId: c ? `c_${c[1]}` : conversationIdFromPath(),
+      responseId: r ? `r_${r[1]}` : null,
+      choiceId: rc ? `rc_${rc[1]}` : null
+    };
+  }
+
+  function noteServerTip(tip) {
+    if (!tip || !tip.responseId) return;
+    lastServerTip = tip;
+    post('timelineTip', tip);
+  }
+
+  function unwrapFreq(bodyText) {
+    if (!bodyText || typeof bodyText !== 'string' || !bodyText.includes('f.req=')) return null;
+    try {
+      const params = new URLSearchParams(bodyText);
+      const raw = params.get('f.req');
+      if (!raw) return null;
+      return { params, freq: JSON.parse(raw) };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function findInnerFromFreq(freq) {
+    // StreamGenerate: [null, "<inner json string>"]
+    if (Array.isArray(freq) && freq.length >= 2 && typeof freq[1] === 'string') {
+      try {
+        const inner = JSON.parse(freq[1]);
+        if (Array.isArray(inner)) return { kind: 'stream', inner, rebuild: (next) => [freq[0], JSON.stringify(next)] };
+      } catch (_) { /* fall through */ }
+    }
+    // batchexecute: [[["rpcid", "<payload>", null, "generic"]]]
+    if (Array.isArray(freq) && Array.isArray(freq[0]) && Array.isArray(freq[0][0])) {
+      const row = freq[0][0];
+      if (typeof row[1] === 'string') {
+        try {
+          const payload = JSON.parse(row[1]);
+          // Some sends nest the same [null, innerString] shape inside.
+          if (Array.isArray(payload) && typeof payload[1] === 'string') {
+            const inner = JSON.parse(payload[1]);
+            if (Array.isArray(inner)) {
+              return {
+                kind: 'batch-nested',
+                inner,
+                rebuild: (next) => {
+                  const copy = freq.map((x) => (Array.isArray(x) ? x.slice() : x));
+                  copy[0] = copy[0].slice();
+                  copy[0][0] = row.slice();
+                  const nested = payload.slice();
+                  nested[1] = JSON.stringify(next);
+                  copy[0][0][1] = JSON.stringify(nested);
+                  return copy;
+                }
+              };
+            }
+          }
+          if (Array.isArray(payload) && payload.length > ACTION_INDEX) {
+            return {
+              kind: 'batch',
+              inner: payload,
+              rebuild: (next) => {
+                const copy = freq.map((x) => (Array.isArray(x) ? x.slice() : x));
+                copy[0] = copy[0].slice();
+                copy[0][0] = row.slice();
+                copy[0][0][1] = JSON.stringify(next);
+                return copy;
+              }
+            };
+          }
+        } catch (_) { /* ignore */ }
+      }
+    }
+    return null;
+  }
+
+  function readConvTuple(inner) {
+    const t = inner && inner[CONV_INDEX];
+    if (!Array.isArray(t)) return null;
+    return {
+      conversationId: typeof t[0] === 'string' ? t[0] : null,
+      responseId: typeof t[1] === 'string' ? t[1] : null,
+      choiceId: typeof t[2] === 'string' ? t[2] : null
+    };
+  }
+
+  function writeConvTuple(inner, tip) {
+    if (!Array.isArray(inner) || !tip) return inner;
+    const next = inner.slice();
+    const prev = Array.isArray(next[CONV_INDEX]) ? next[CONV_INDEX].slice() : [];
+    if (tip.conversationId) prev[0] = tip.conversationId;
+    if (tip.responseId) prev[1] = tip.responseId;
+    if (tip.choiceId) prev[2] = tip.choiceId;
+    next[CONV_INDEX] = prev;
+    return next;
+  }
+
+  function promptTextFromInner(inner) {
+    try {
+      const p = inner && inner[0];
+      if (Array.isArray(p) && typeof p[0] === 'string') return p[0];
+      if (typeof p === 'string') return p;
+    } catch (_) { /* ignore */ }
+    return null;
+  }
+
+  function maybeRewriteBody(bodyText) {
+    if (!tipOverride || !tipOverride.responseId || typeof bodyText !== 'string') {
+      return { body: bodyText, meta: null };
+    }
+    const unwrapped = unwrapFreq(bodyText);
+    if (!unwrapped) return { body: bodyText, meta: null };
+    const found = findInnerFromFreq(unwrapped.freq);
+    if (!found || !Array.isArray(found.inner)) return { body: bodyText, meta: null };
+
+    const action = found.inner[ACTION_INDEX];
+    // Never rewrite edit resends or regenerates — only normal continues.
+    if (action === ACTION_EDIT || action === 5 || action === 7) {
+      return { body: bodyText, meta: inspectSendMeta(found.inner, false) };
+    }
+
+    const before = readConvTuple(found.inner);
+    // Only rewrite when parent tip differs from the version the user selected.
+    if (before && before.responseId === tipOverride.responseId) {
+      return { body: bodyText, meta: inspectSendMeta(found.inner, false) };
+    }
+
+    const rewrittenInner = writeConvTuple(found.inner, tipOverride);
+    // Clear action so this is a normal continue on the selected tip.
+    rewrittenInner[ACTION_INDEX] = null;
+    const newFreq = found.rebuild(rewrittenInner);
+    unwrapped.params.set('f.req', JSON.stringify(newFreq));
+    return {
+      body: unwrapped.params.toString(),
+      meta: inspectSendMeta(rewrittenInner, true)
+    };
+  }
+
+  function inspectSendMeta(inner, rewritten) {
+    const tip = readConvTuple(inner);
+    const action = inner[ACTION_INDEX];
+    const prompt = promptTextFromInner(inner);
+    return {
+      action: action == null ? null : action,
+      isEdit: action === ACTION_EDIT,
+      prompt,
+      tip,
+      rewritten: Boolean(rewritten),
+      chatId: (tip && tip.conversationId) || conversationIdFromPath()
+    };
+  }
+
+  function inspectOutgoing(bodyText) {
+    const unwrapped = unwrapFreq(bodyText);
+    if (!unwrapped) return null;
+    const found = findInnerFromFreq(unwrapped.freq);
+    if (!found) return null;
+    return inspectSendMeta(found.inner, false);
+  }
+
+  function emitOutgoing(meta) {
+    if (!meta) return;
+    if (meta.isEdit) {
+      lastEditAt = Date.now();
+      post('timelineEdit', meta);
+    } else {
+      post('timelineSend', meta);
+    }
+  }
+
+  async function readRequestBody(input, init) {
+    try {
+      if (init && typeof init.body === 'string') return init.body;
+      if (typeof input !== 'string' && input && typeof input.clone === 'function') {
+        const req = input.clone();
+        if (typeof req.text === 'function') return await req.text();
+      }
+    } catch (_) { /* ignore */ }
+    return null;
+  }
+
   const originalFetch = window.fetch;
   window.fetch = function (...args) {
-    const promise = originalFetch.apply(this, args);
+    const url = String(typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '');
+    const inspect = shouldInspect(url);
+
+    if (!inspect) return originalFetch.apply(this, args);
+
+    // Rewrite continue-sends synchronously when body is already a string.
     try {
-      const url = String(typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '');
-      if (shouldInspect(url)) {
-        promise.then((response) => {
-          if (response && response.ok) readBodyText(response);
+      const init = args[1] ? { ...args[1] } : {};
+      if (typeof init.body === 'string' && init.body.includes('f.req=')) {
+        const inspected = inspectOutgoing(init.body);
+        const { body, meta } = maybeRewriteBody(init.body);
+        if (body !== init.body) {
+          init.body = body;
+          args = [args[0], init];
+          emitOutgoing(meta || inspected);
+        } else if (inspected) {
+          emitOutgoing(inspected);
+        }
+      } else {
+        readRequestBody(args[0], args[1]).then((body) => {
+          if (body) emitOutgoing(inspectOutgoing(body));
         }).catch(() => {});
       }
     } catch (_) { /* ignore */ }
+
+    const promise = originalFetch.apply(this, args);
+    promise.then((response) => {
+      if (response && response.ok) {
+        readBodyText(response).then((text) => {
+          if (!text) return;
+          const tip = extractIdsFromText(text);
+          if (tip) noteServerTip(tip);
+        }).catch(() => {});
+      }
+    }).catch(() => {});
     return promise;
   };
 
@@ -193,11 +434,26 @@
     return xhrOpen.call(this, method, url, ...rest);
   };
   XMLHttpRequest.prototype.send = function (...args) {
+    try {
+      if (shouldInspect(this.__bgUrl || '') && typeof args[0] === 'string' && args[0].includes('f.req=')) {
+        const inspected = inspectOutgoing(args[0]);
+        const { body, meta } = maybeRewriteBody(args[0]);
+        if (body !== args[0]) {
+          args[0] = body;
+          emitOutgoing(meta || inspected);
+        } else if (inspected) {
+          emitOutgoing(inspected);
+        }
+      }
+    } catch (_) { /* ignore */ }
+
     this.addEventListener('load', () => {
       try {
         if (!shouldInspect(this.__bgUrl || '')) return;
         const found = extractMetaFromText(this.responseText);
         if (found) emitUsageMetadata(found);
+        const tip = extractIdsFromText(this.responseText);
+        if (tip) noteServerTip(tip);
       } catch (_) { /* ignore */ }
     });
     return xhrSend.apply(this, args);
@@ -427,6 +683,77 @@
     return { usage: usage || null, tier: tier || null };
   }
 
+  async function fetchChatTurns(chatId) {
+    const data = wiz();
+    const token = sessionToken();
+    if (!token) throw new Error('no-token');
+    const cid = chatId || conversationIdFromPath();
+    if (!cid) throw new Error('no-chat');
+
+    const query = new URLSearchParams({
+      rpcids: RPC_READ_CHAT,
+      'source-path': location.pathname || '/app',
+      rt: 'c'
+    });
+    if (typeof data.cfb2h === 'string') query.set('bl', data.cfb2h);
+    if (typeof data.FdrFJe === 'string') query.set('f.sid', data.FdrFJe);
+    query.set('hl', (document.documentElement.lang || 'en').split('-')[0]);
+    query.set('_reqid', String(Math.floor(100000 + Math.random() * 9000000)));
+
+    const body = new URLSearchParams({
+      'f.req': JSON.stringify([[[RPC_READ_CHAT, JSON.stringify([cid, 100, null, 1, [1], [4], null, 1]), null, 'generic']]]),
+      at: token
+    });
+
+    const response = await originalFetch(`/_/BardChatUi/data/batchexecute?${query}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+        'X-Same-Domain': '1'
+      },
+      body: body.toString()
+    });
+    if (!response.ok) throw new Error(`http-${response.status}`);
+    const text = await response.text();
+
+    const turns = [];
+    for (const { rpcid, payload } of decodeBatchExecute(text)) {
+      if (rpcid !== RPC_READ_CHAT) continue;
+      const list = Array.isArray(payload) ? payload[0] : null;
+      if (!Array.isArray(list)) continue;
+      for (const turn of list) {
+        if (!Array.isArray(turn)) continue;
+        const ids = Array.isArray(turn[1]) ? turn[1] : (Array.isArray(turn[0]) ? turn[0] : []);
+        const userBlock = turn[2];
+        const respBlock = turn[3];
+        let userText = '';
+        try {
+          userText = (userBlock && userBlock[0] && userBlock[0][0]) || '';
+        } catch (_) { /* ignore */ }
+        let modelText = '';
+        let choiceId = null;
+        try {
+          const cand = respBlock && respBlock[0] && respBlock[0][0];
+          if (Array.isArray(cand)) {
+            choiceId = typeof cand[0] === 'string' ? cand[0] : null;
+            const chunks = cand[1];
+            if (Array.isArray(chunks)) modelText = chunks.filter((x) => typeof x === 'string').join('');
+            else if (typeof chunks === 'string') modelText = chunks;
+          }
+        } catch (_) { /* ignore */ }
+        turns.push({
+          conversationId: typeof ids[0] === 'string' ? ids[0] : cid,
+          responseId: typeof ids[1] === 'string' ? ids[1] : null,
+          choiceId: choiceId || (typeof ids[2] === 'string' ? ids[2] : null),
+          userText: String(userText || ''),
+          modelText: String(modelText || '')
+        });
+      }
+    }
+    return { chatId: cid, turns, tip: lastServerTip };
+  }
+
   window.addEventListener('message', (event) => {
     if (event.source !== window || !event.data || event.data.source !== CMD) return;
     const { type, id } = event.data;
@@ -438,6 +765,42 @@
       fetchUsageAndPlan()
         .then((result) => post('usage', { id, ok: true, usage: result.usage, tier: result.tier }))
         .catch((err) => post('usage', { id, ok: false, error: String(err && err.message || err) }));
+      return;
+    }
+    if (type === 'set-tip-override') {
+      const tip = event.data.tip;
+      if (tip && tip.responseId) {
+        tipOverride = {
+          conversationId: tip.conversationId || conversationIdFromPath(),
+          responseId: tip.responseId,
+          choiceId: tip.choiceId || null
+        };
+      } else {
+        tipOverride = null;
+      }
+      post('tipOverride', { id, ok: true, tip: tipOverride });
+      return;
+    }
+    if (type === 'clear-tip-override') {
+      tipOverride = null;
+      post('tipOverride', { id, ok: true, tip: null });
+      return;
+    }
+    if (type === 'get-timeline-state') {
+      post('timelineState', {
+        id,
+        ok: true,
+        tipOverride,
+        lastServerTip,
+        lastEditAt,
+        chatId: conversationIdFromPath()
+      });
+      return;
+    }
+    if (type === 'read-chat') {
+      fetchChatTurns(event.data.chatId)
+        .then((result) => post('chatTurns', { id, ok: true, ...result }))
+        .catch((err) => post('chatTurns', { id, ok: false, error: String(err && err.message || err) }));
     }
   });
 

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Better Gemini",
-  "version": "1.1.9",
-  "description": "Customize Gemini: hide the chat bar, track usage limits, and see context window use. Not affiliated with Google.",
+  "version": "1.2.0",
+  "description": "Customize Gemini: hide the chat bar, track usage limits, see context use, and keep parallel message versions. Not affiliated with Google.",
   "homepage_url": "https://github.com/SmartWorksLabs/Better-Gemini",
   "permissions": ["storage"],
   "background": {
@@ -17,7 +17,7 @@
     },
     {
       "matches": ["*://gemini.google.com/*"],
-      "js": ["content.js"],
+      "js": ["content.js", "timelines.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     }

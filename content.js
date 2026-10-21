@@ -15,9 +15,9 @@
   const SYNC_KEYS = [
     'corner', 'hiddenOpacity', 'typeToChat', 'avoidOverlap',
     'hideDelayEnabled', 'hideDelayMs', 'hideDelayUnit', 'pillStyle', 'revealMode',
-    'showUsage', 'showContext', 'firstInstalledDate'
+    'showUsage', 'showContext', 'showTimelines', 'firstInstalledDate'
   ];
-  const TOGGLE_KEYS = ['typeToChat', 'avoidOverlap', 'hideDelayEnabled', 'showUsage', 'showContext'];
+  const TOGGLE_KEYS = ['typeToChat', 'avoidOverlap', 'hideDelayEnabled', 'showUsage', 'showContext', 'showTimelines'];
 
   const DELAY_UNITS = { ms: 1, s: 1000, min: 60000 };
   const DELAY_SLIDER_MAX_MS = 5000;
@@ -43,6 +43,7 @@
     pillStyle: 'icon',
     showUsage: true,
     showContext: true,
+    showTimelines: true,
     firstInstalledDate: Date.now()
   };
 
@@ -919,6 +920,7 @@
           <div class="menu-header">Features</div>
           ${toggleRowHTML('showUsage', 'Usage tracker', 'Current Usage and Weekly Usage with reset times')}
           ${toggleRowHTML('showContext', 'Context window', 'Tokens used in this chat, under the bar')}
+          ${toggleRowHTML('showTimelines', 'Message versions', 'Keep parallel versions when you edit a prompt (Claude-style)')}
           <div class="divider"></div>
           <div class="menu-header">Chat bar</div>
           <span class="menu-item-label choice-label" id="reveal-label">Show the chat bar on</span>

@@ -12,12 +12,18 @@ chrome.runtime.onInstalled.addListener((details) => {
       pillStyle: 'icon',
       showUsage: true,
       showContext: true,
+      showTimelines: true,
       firstInstalledDate: Date.now()
     });
   }
   if (details.reason === 'update') {
     // Product defaults moved to click-to-reveal and icon-only settings button.
     chrome.storage.sync.set({ revealMode: 'click', pillStyle: 'icon' });
+    chrome.storage.sync.get(['showTimelines'], (result) => {
+      if (result.showTimelines === undefined) {
+        chrome.storage.sync.set({ showTimelines: true });
+      }
+    });
   }
   // Older versions stored a theme flag and an unused reveal counter.
   chrome.storage.local.remove(['darkTheme', 'interactionsCount']);

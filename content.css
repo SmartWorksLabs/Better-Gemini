@@ -263,3 +263,104 @@ body.dark-theme .better-gemini-usage.level-danger,
 .better-gemini-footer.theme-dark .level-danger {
   color: #f2b8b5;
 }
+
+/* ---- Message versions (Claude-style < n / m >) ---- */
+
+.bg-timeline-hidden {
+  display: none !important;
+}
+
+.bg-timeline-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  vertical-align: middle;
+  user-select: none;
+  font-family: "Google Sans", "Google Sans Text", Roboto, Arial, Helvetica, sans-serif;
+  font-size: 13px;
+  line-height: 1;
+  color: #5f6368;
+}
+
+body.dark-theme .bg-timeline-controls {
+  color: #9aa0a6;
+}
+
+.bg-timeline-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.bg-timeline-btn:hover:not(:disabled) {
+  background: rgba(60, 64, 67, 0.08);
+}
+
+body.dark-theme .bg-timeline-btn:hover:not(:disabled) {
+  background: rgba(232, 234, 237, 0.08);
+}
+
+.bg-timeline-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.bg-timeline-count {
+  font-variant-numeric: tabular-nums;
+  min-width: 2.75em;
+  text-align: center;
+  font-weight: 500;
+  color: #202124;
+}
+
+body.dark-theme .bg-timeline-count {
+  color: #e8eaed;
+}
+
+.bg-timeline-replay {
+  margin: 12px 0;
+  padding: 12px 16px;
+  border-radius: 16px;
+  max-width: 100%;
+  box-sizing: border-box;
+  font-family: "Google Sans", "Google Sans Text", Roboto, Arial, Helvetica, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.bg-timeline-replay.bg-timeline-user {
+  background: #f0f4f9;
+  color: #1f1f1f;
+}
+
+body.dark-theme .bg-timeline-replay.bg-timeline-user {
+  background: #2d2e31;
+  color: #e8eaed;
+}
+
+.bg-timeline-replay.bg-timeline-model {
+  background: transparent;
+  color: inherit;
+  padding-left: 4px;
+}
+
+.bg-timeline-replay-label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  opacity: 0.55;
+  margin-bottom: 6px;
+}
+
+.bg-timeline-replay-body {
+  color: inherit;
+}
