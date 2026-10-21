@@ -150,16 +150,15 @@
   }
 
   function isGenerating() {
+    // Keep this narrow — broad "Stop" / aria-busy matches match Gemini chrome and
+    // can leave suppress-gen stuck or thrash the version controls.
     return Boolean(
       document.querySelector(
         [
           'button[aria-label*="Stop generating" i]',
-          'button[aria-label*="Stop" i]',
-          'button[aria-label*="stop" i]',
-          '[data-test-id*="stop" i]',
-          'button.stop-button',
-          '.stop-icon',
-          '[aria-busy="true"]'
+          'button[aria-label="Stop" i]',
+          '[data-test-id="stop-button"]',
+          'button.stop-generating-button'
         ].join(', ')
       )
     );
@@ -842,6 +841,33 @@
     void forkAt;
   }
 
+  function isUserTurnVisible(el) {
+    if (!el || !el.isConnected) return false;
+    if (el.dataset.bgTimelineHide === '1') return false;
+    if (el.style.display === 'none') return false;
+    try {
+      if (window.getComputedStyle(el).display === 'none') return false;
+    } catch (_) {
+      /* ignore */
+    }
+    return true;
+  }
+
+  function mountVersionControls(host, row) {
+    // Must live INSIDE user-query. Sibling mounts get wiped by Gemini re-renders.
+    if (!host || !row) return;
+    if (row.parentElement === host) return;
+    const bubble =
+      host.querySelector('.user-query-bubble-with-background') ||
+      host.querySelector('.user-query-bubble-container') ||
+      host.querySelector('[class*="user-query-bubble"]');
+    if (bubble && bubble.parentElement && host.contains(bubble.parentElement)) {
+      bubble.parentElement.appendChild(row);
+    } else {
+      host.appendChild(row);
+    }
+  }
+
   function ensureControls() {
     if (!enabled || !thread || !hasForks(thread)) {
       document.querySelectorAll('.bg-timeline-controls').forEach((n) => n.remove());
@@ -850,7 +876,7 @@
 
     const t = thread;
     const userNodes = turnNodes({ includeClones: true }).filter(
-      (n) => roleOf(n) === 'user' && n.style.display !== 'none'
+      (n) => roleOf(n) === 'user' && isUserTurnVisible(n)
     );
     const keep = new Set();
     const visibleUserCount = userNodes.length;
@@ -859,15 +885,19 @@
       const forkAt = Number(key);
       const fork = t.forks[key];
       if (!fork || !fork.branchIds || fork.branchIds.length < 2) return;
-      // Only show a fork control when that user turn exists on the path on screen
-      // (nested later forks reappear when you switch back to a longer branch).
-      if (forkAt >= visibleUserCount) return;
-      const host = userNodes[forkAt];
-      if (!host) return;
 
       // Drop ids that were deleted; never drop surviving siblings.
       fork.branchIds = fork.branchIds.filter((id) => id && t.branches[id]);
       if (fork.branchIds.length < 2) return;
+
+      // Prefer the visible turn; fall back to any matching user-query so controls
+      // still appear while Gemini is mid-render.
+      let host = forkAt < visibleUserCount ? userNodes[forkAt] : null;
+      if (!host) {
+        const allUsers = turnNodes({ includeClones: true }).filter((n) => roleOf(n) === 'user');
+        host = allUsers[forkAt] || allUsers[Math.min(forkAt, Math.max(0, allUsers.length - 1))];
+      }
+      if (!host) return;
 
       const total = fork.branchIds.length;
       let idx = fork.branchIds.indexOf(t.activeBranchId);
@@ -875,7 +905,9 @@
       fork.activeIndex = idx;
       keep.add(key);
 
-      let row = document.querySelector(`.bg-timeline-controls[data-fork-at="${key}"]`);
+      let row =
+        host.querySelector(`.bg-timeline-controls[data-fork-at="${key}"]`) ||
+        document.querySelector(`.bg-timeline-controls[data-fork-at="${key}"]`);
       if (!row) {
         row = document.createElement('div');
         row.className = 'bg-timeline-controls';
@@ -884,10 +916,7 @@
         row.dataset.forkAt = key;
       }
       row.dataset.forkAt = key;
-      // Keep controls outside user-query so focus never draws Gemini's bubble ring.
-      if (host.contains(row) || !row.parentElement || row.previousElementSibling !== host) {
-        host.insertAdjacentElement('afterend', row);
-      }
+      mountVersionControls(host, row);
 
       let prev = row.querySelector('.bg-timeline-btn[data-dir="prev"]');
       let label = row.querySelector('.bg-timeline-count');

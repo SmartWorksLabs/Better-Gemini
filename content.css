@@ -267,10 +267,10 @@ body.dark-theme .better-gemini-usage.level-danger,
 /* ---- Message versions: tiny controls only. No message/font CSS. ---- */
 
 .bg-timeline-controls {
-  display: inline-flex;
+  display: inline-flex !important;
   align-items: center;
   gap: 6px;
-  margin: 0 0 0 8px;
+  margin: 4px 0 0 8px;
   padding: 0;
   width: auto;
   max-width: none;
@@ -286,25 +286,25 @@ body.dark-theme .better-gemini-usage.level-danger,
   color: #5f6368;
   opacity: 1;
   writing-mode: horizontal-tb;
+  position: relative;
+  z-index: 5;
 }
 
-/* Kill Gemini's focus/selection halo when a version control sits beside a turn. */
-user-query:has(+ .bg-timeline-controls):focus,
-user-query:has(+ .bg-timeline-controls):focus-within,
-user-query:has(+ .bg-timeline-controls) .user-query-bubble-with-background,
-user-query:has(+ .bg-timeline-controls) .user-query-bubble-container,
-user-query:has(+ .bg-timeline-controls) [class*="user-query-bubble"] {
+/* Kill Gemini's focus/selection halo around version controls. */
+user-query:has(.bg-timeline-controls):focus,
+user-query:has(.bg-timeline-controls):focus-within,
+user-query:has(.bg-timeline-controls) .user-query-bubble-with-background,
+user-query:has(.bg-timeline-controls) .user-query-bubble-container,
+user-query:has(.bg-timeline-controls) [class*="user-query-bubble"] {
   outline: none !important;
   box-shadow: none !important;
 }
 
-/* While viewing a version that is not the one generating, hide stop / busy chrome. */
-html.bg-timeline-suppress-gen button[aria-label*="Stop" i],
-html.bg-timeline-suppress-gen button[aria-label*="stop" i],
-html.bg-timeline-suppress-gen [data-test-id*="stop" i],
-html.bg-timeline-suppress-gen button.stop-button,
-html.bg-timeline-suppress-gen .stop-icon,
-html.bg-timeline-suppress-gen [aria-busy="true"] {
+/* While viewing a version that is not the one generating, hide stop chrome only. */
+html.bg-timeline-suppress-gen button[aria-label*="Stop generating" i],
+html.bg-timeline-suppress-gen button[aria-label="Stop" i],
+html.bg-timeline-suppress-gen [data-test-id="stop-button"],
+html.bg-timeline-suppress-gen button.stop-generating-button {
   visibility: hidden !important;
   pointer-events: none !important;
   opacity: 0 !important;
