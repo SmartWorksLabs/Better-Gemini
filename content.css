@@ -85,11 +85,12 @@
   padding: 0 12px;
   box-sizing: border-box;
   pointer-events: none;
-  font-family: 'Google Sans', Roboto, Arial, sans-serif;
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 16px;
-  letter-spacing: 0.01em;
+  font-family: "Google Sans", "Google Sans Text", Roboto, Arial, Helvetica, sans-serif !important;
+  font-size: 12px !important;
+  font-weight: 400 !important;
+  font-style: normal !important;
+  line-height: 16px !important;
+  letter-spacing: 0.01em !important;
   color: #5f6368;
   white-space: nowrap;
 }
@@ -112,9 +113,13 @@ body.dark-theme .better-gemini-footer,
   max-width: 42%;
   overflow: hidden;
   text-overflow: ellipsis;
-  font: inherit;
+  font-family: inherit !important;
+  font-size: inherit !important;
+  font-weight: 400 !important;
+  font-style: normal !important;
+  line-height: inherit !important;
+  letter-spacing: inherit !important;
   color: inherit;
-  line-height: inherit;
 }
 
 .better-gemini-context[hidden],
@@ -127,38 +132,17 @@ body.dark-theme .better-gemini-footer,
 .better-gemini-context .bg-text,
 .better-gemini-usage .bg-sep,
 .better-gemini-usage .bg-text {
-  font: inherit;
-  font-weight: 400;
-  line-height: inherit;
+  font-family: inherit !important;
+  font-size: inherit !important;
+  font-weight: 400 !important;
+  font-style: normal !important;
+  line-height: inherit !important;
+  letter-spacing: inherit !important;
   vertical-align: baseline;
 }
 
 .better-gemini-context .bg-mark {
   opacity: 0.85;
-}
-
-.better-gemini-context .bg-info {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 12px;
-  height: 12px;
-  margin: 0 1px;
-  border: 1px solid currentColor;
-  border-radius: 50%;
-  font-size: 8px;
-  font-weight: 600;
-  line-height: 1;
-  letter-spacing: 0;
-  opacity: 0.65;
-  cursor: help;
-  pointer-events: auto;
-  user-select: none;
-}
-
-.better-gemini-context .bg-info:hover {
-  opacity: 1;
 }
 
 .better-gemini-context .bg-sep,

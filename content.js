@@ -68,9 +68,6 @@
     ADVANCED: 1000000
   };
 
-  const CONTEXT_INFO =
-    'Set by your Google AI plan (Free 32k, Plus 128k, Pro/Ultra 1M) — not by Flash vs Pro.';
-
   // Load settings from storage
   function loadSettings() {
     return new Promise((resolve) => {
@@ -2392,27 +2389,17 @@
 
   function renderContextLabel() {
     if (!contextElement) return;
-    const { tokens, limit, estimated } = contextState;
+    const { tokens, limit } = contextState;
     const ratio = limit > 0 ? tokens / limit : 0;
     contextElement.classList.remove('level-ok', 'level-warn', 'level-danger');
     contextElement.classList.add(
       ratio >= DANGER_AT ? 'level-danger' : ratio >= WARN_AT ? 'level-warn' : 'level-ok'
     );
-    const approx = estimated ? '~' : '';
-    const planNote = planState.tier ? ` Detected plan: ${planState.tier}.` : '';
-    contextElement.removeAttribute('title');
     contextElement.textContent = '';
 
     const mark = document.createElement('span');
     mark.className = 'bg-mark';
     mark.textContent = 'Context Window';
-
-    const info = document.createElement('span');
-    info.className = 'bg-info';
-    info.textContent = 'i';
-    info.title = CONTEXT_INFO + planNote;
-    info.setAttribute('aria-label', CONTEXT_INFO + planNote);
-    info.setAttribute('role', 'img');
 
     const sep = document.createElement('span');
     sep.className = 'bg-sep';
@@ -2420,13 +2407,9 @@
 
     const value = document.createElement('span');
     value.className = 'bg-text';
-    value.textContent = `${approx}${formatTokens(tokens)} / ${formatTokens(limit)}`;
-    value.title = estimated
-      ? 'Estimated until Gemini returns an exact count.'
-      : 'Exact token count from Gemini.';
+    value.textContent = `${formatTokens(tokens)} / ${formatTokens(limit)}`;
 
     contextElement.appendChild(mark);
-    contextElement.appendChild(info);
     contextElement.appendChild(sep);
     contextElement.appendChild(value);
     placeChatFooter();
@@ -2465,19 +2448,25 @@
     const disclaimer = findDisclaimerEl();
     let top;
     let height = 16;
+    // Always force Gemini's sans stack. Copying computed font-family can fall
+    // through to the browser serif default (Times) on some builds.
+    footerElement.style.fontFamily = '"Google Sans", "Google Sans Text", Roboto, Arial, Helvetica, sans-serif';
+    footerElement.style.fontWeight = '400';
+    footerElement.style.fontStyle = 'normal';
+    footerElement.style.letterSpacing = '0.01em';
     if (disclaimer) {
       const d = disclaimer.getBoundingClientRect();
       top = d.top;
       height = Math.max(14, Math.round(d.height));
       const style = getComputedStyle(disclaimer);
       footerElement.style.fontSize = style.fontSize || '12px';
-      footerElement.style.lineHeight = style.lineHeight || '16px';
-      footerElement.style.fontFamily = style.fontFamily || "'Google Sans', Roboto, Arial, sans-serif";
+      footerElement.style.lineHeight = style.lineHeight && style.lineHeight !== 'normal' ? style.lineHeight : '16px';
       footerElement.style.color = style.color || '#5f6368';
     } else {
       top = barRect.bottom + (barIsDocked() && !barCoversNaturally() ? 2 : 8);
       footerElement.style.fontSize = '12px';
       footerElement.style.lineHeight = '16px';
+      footerElement.style.color = '';
     }
 
     footerElement.style.left = `${Math.round(barRect.left)}px`;
