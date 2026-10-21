@@ -10,7 +10,7 @@
   const BRIDGE_SRC = 'better-gemini-bridge';
   const STORE_KEY = 'betterGeminiTimelines';
   const OVERLAY_ID = 'better-gemini-timeline-overlay';
-  const STORE_VERSION = 7;
+  const STORE_VERSION = 8;
   const MAX_CHATS = 40;
   const MAX_BRANCHES_PER_CHAT = 48;
 
@@ -27,6 +27,9 @@
   let preEditFreeze = null;
   /** Last complete user+model transcript before edit UI rewrote the DOM. */
   let lastGoodTranscript = [];
+  /** Branch currently generating a reply (null when idle). */
+  let streamingBranchId = null;
+  let paintGuard = false;
   const bridgeWaiters = new Map();
 
   function bridgePost(type, extra = {}) {
@@ -116,6 +119,8 @@
     return {
       updatedAt: Date.now(),
       activeBranchId: branchId,
+      /** Branch whose content the live Gemini DOM currently represents. */
+      ownerBranchId: branchId,
       geminiTipBranchId: branchId,
       serverTip: null,
       forks: {},
@@ -130,6 +135,38 @@
         }
       }
     };
+  }
+
+  function ownerIdOf(t) {
+    if (!t) return null;
+    return t.ownerBranchId || t.geminiTipBranchId || t.activeBranchId || null;
+  }
+
+  function setBranchMessages(branch, msgs) {
+    if (!branch) return;
+    // Always deep-copy — branches must never share message arrays.
+    branch.messages = snapshotMessages(msgs || []);
+    branch.updatedAt = Date.now();
+  }
+
+  function isGenerating() {
+    return Boolean(
+      document.querySelector(
+        [
+          'button[aria-label*="Stop generating" i]',
+          'button[aria-label*="Stop" i]',
+          'button[aria-label*="stop" i]',
+          '[data-test-id*="stop" i]',
+          'button.stop-button',
+          '.stop-icon',
+          '[aria-busy="true"]'
+        ].join(', ')
+      )
+    );
+  }
+
+  function setGeneratingUiSuppressed(suppressed) {
+    document.documentElement.classList.toggle('bg-timeline-suppress-gen', Boolean(suppressed));
   }
 
   /** Point every fork that listed `fromId` at `toId` instead (nested history stays linked). */
@@ -189,7 +226,11 @@
       if (!fork || !fork.branchIds || !fork.branchIds.length) return;
       const liveId = liveBranchId(fork);
       fork.activeIndex = fork.branchIds.length - 1;
-      if (liveId) thread.activeBranchId = liveId;
+      if (liveId) {
+        thread.activeBranchId = liveId;
+        thread.ownerBranchId = liveId;
+        thread.geminiTipBranchId = liveId;
+      }
     });
   }
 
@@ -472,69 +513,141 @@
     return turnNodes({ includeClones: true });
   }
 
-  /** Paint an entire saved branch into Gemini's message shells (keeps nested history). */
-  function applyBranchInChat(forkAt, branch) {
-    const msgs = snapshotMessages(branch.messages || []);
+  /** Paint a branch's stored messages into Gemini shells. Never shares arrays across branches. */
+  function paintBranchMessages(branch) {
+    const msgs = snapshotMessages(branch && branch.messages ? branch.messages : []);
     if (!msgs.length) {
       console.warn('[Better Gemini] version has no saved messages; cannot restore');
       return false;
     }
 
-    const nativeOnly = turnNodes({ includeClones: false });
-    if (!viewingAlternate && nativeOnly.length) {
-      liveDomBackup = nativeOnly.map((n) => ({
-        role: roleOf(n),
-        text: textOf(n),
-        html: htmlOf(n)
-      }));
-    }
+    paintGuard = true;
+    try {
+      document.querySelectorAll('[data-bg-timeline-clone]').forEach((n) => n.remove());
+      document.querySelectorAll('[data-bg-timeline-hide], .bg-timeline-hidden').forEach((n) => {
+        n.classList.remove('bg-timeline-hidden');
+        n.style.display = '';
+        delete n.dataset.bgTimelineHide;
+      });
 
-    // Drop prior clones, then rebuild slots for this branch's full transcript.
-    document.querySelectorAll('[data-bg-timeline-clone]').forEach((n) => n.remove());
-    document.querySelectorAll('[data-bg-timeline-hide], .bg-timeline-hidden').forEach((n) => {
-      n.classList.remove('bg-timeline-hidden');
-      n.style.display = '';
-      delete n.dataset.bgTimelineHide;
-    });
-
-    const nodes = ensureSlotsForMessages(msgs);
-    for (let i = 0; i < msgs.length && i < nodes.length; i++) {
-      nodes[i].style.display = '';
-      delete nodes[i].dataset.bgTimelineHide;
-      nodes[i].classList.remove('bg-timeline-hidden');
-      setNativeContent(nodes[i], msgs[i].role || roleOf(nodes[i]), msgs[i]);
+      const nodes = ensureSlotsForMessages(msgs);
+      for (let i = 0; i < msgs.length && i < nodes.length; i++) {
+        nodes[i].style.display = '';
+        delete nodes[i].dataset.bgTimelineHide;
+        nodes[i].classList.remove('bg-timeline-hidden');
+        setNativeContent(nodes[i], msgs[i].role || roleOf(nodes[i]), msgs[i]);
+      }
+      for (let i = msgs.length; i < nodes.length; i++) {
+        nodes[i].style.display = 'none';
+        nodes[i].dataset.bgTimelineHide = '1';
+      }
+      clearMessageFocusChrome();
+      return true;
+    } finally {
+      // Allow the next tick to observe again after our own DOM writes settle.
+      setTimeout(() => {
+        paintGuard = false;
+      }, 50);
     }
-    for (let i = msgs.length; i < nodes.length; i++) {
-      nodes[i].style.display = 'none';
-      nodes[i].dataset.bgTimelineHide = '1';
-    }
+  }
 
-    viewingAlternate = true;
-    clearMessageFocusChrome();
+  function applyBranchInChat(forkAt, branch) {
+    const ok = paintBranchMessages(branch);
+    if (ok) viewingAlternate = true;
     void forkAt;
+    return ok;
+  }
+
+  /** Write the on-screen transcript into one branch only (deep copy). */
+  function captureDomIntoBranch(branchId) {
+    const t = thread;
+    if (!t || !branchId || !t.branches[branchId]) return false;
+    const msgs = scrapeMessages();
+    if (!msgs.length) return false;
+    setBranchMessages(t.branches[branchId], msgs);
+    if (t.serverTip && (branchId === streamingBranchId || branchId === ownerIdOf(t))) {
+      t.branches[branchId].tip = { ...t.serverTip };
+    }
     return true;
   }
 
-  async function syncActiveFromDom() {
-    if (!enabled || !chatId || viewingAlternate || isEditModeOpen()) return;
-    refreshLiveBuffer();
+  /** Before leaving a branch, freeze its content so siblings never inherit it. */
+  function commitActiveBranch() {
+    const t = thread;
+    if (!t || !t.activeBranchId) return;
+    const activeId = t.activeBranchId;
+    const ownerId = ownerIdOf(t);
+    // Only scrape into the branch that currently owns the live DOM.
+    // Viewing another version means the DOM may be a mix — trust that branch's store.
+    if (activeId === ownerId) {
+      captureDomIntoBranch(activeId);
+      liveBuffer = snapshotMessages(t.branches[activeId].messages || []);
+      if (transcriptScore(liveBuffer) >= transcriptScore(lastGoodTranscript)) {
+        lastGoodTranscript = snapshotMessages(liveBuffer);
+      }
+    }
+  }
+
+  /**
+   * Keep branches isolated:
+   * - DOM scrapes ONLY update the owner branch, and ONLY while that branch is on screen
+   *   (otherwise the DOM is a painted alternate and must not overwrite the owner).
+   * - While viewing another version during generation, re-paint that version and hide
+   *   stop/generating chrome so streams never visually merge.
+   */
+  async function syncBranchesFromDom() {
+    if (!enabled || !chatId || isEditModeOpen() || paintGuard) return;
     const t = ensureThread();
-    const branch = activeBranch();
-    if (!branch) return;
+    if (!t.ownerBranchId && t.geminiTipBranchId) t.ownerBranchId = t.geminiTipBranchId;
 
-    const msgs = liveBuffer.length ? liveBuffer : scrapeMessages();
-    if (!msgs.length) return;
+    const activeId = t.activeBranchId;
+    const ownerId = ownerIdOf(t);
+    if (!activeId || !ownerId || !t.branches[ownerId]) return;
 
-    // Always keep the live tip's transcript fresh so the first edit has something to freeze.
-    const tipId = t.geminiTipBranchId || branch.id;
-    const onLive = branch.id === tipId || pendingEdit;
-    if (!onLive && hasForks(t)) return;
+    const generating = isGenerating();
+    if (!generating && streamingBranchId) {
+      // Stream finished. If that branch is on screen, capture the final DOM into it.
+      if (activeId === streamingBranchId || activeId === ownerId) {
+        captureDomIntoBranch(streamingBranchId || ownerId);
+      }
+      streamingBranchId = null;
+    }
 
-    branch.messages = snapshotMessages(msgs);
-    branch.updatedAt = Date.now();
-    if (t.serverTip) branch.tip = { ...t.serverTip };
+    if (activeId === ownerId) {
+      viewingAlternate = false;
+      setGeneratingUiSuppressed(false);
+      const msgs = scrapeMessages();
+      if (msgs.length) {
+        setBranchMessages(t.branches[ownerId], msgs);
+        liveBuffer = snapshotMessages(msgs);
+        if (transcriptScore(msgs) >= transcriptScore(lastGoodTranscript)) {
+          lastGoodTranscript = snapshotMessages(msgs);
+        }
+      }
+    } else {
+      viewingAlternate = true;
+      // Never scrape into the viewed branch or the owner while painted over —
+      // that is what caused versions to merge. Just keep the viewed transcript
+      // on screen and hide generating UI that belongs to the other version.
+      const viewed = t.branches[activeId];
+      if (viewed && viewed.messages && viewed.messages.length) {
+        if (generating || streamingBranchId) {
+          paintBranchMessages(viewed);
+          setGeneratingUiSuppressed(true);
+        } else {
+          setGeneratingUiSuppressed(false);
+        }
+      } else {
+        setGeneratingUiSuppressed(generating || Boolean(streamingBranchId));
+      }
+    }
+
     if (hasForks(t) || pendingEdit) await saveThread();
     schedulePaint();
+  }
+
+  async function syncActiveFromDom() {
+    return syncBranchesFromDom();
   }
 
   async function onEditDetected(meta) {
@@ -581,7 +694,8 @@
     };
     // Also keep the parent tip populated so nested remaps still have content.
     if (t.branches[parentId]) {
-      t.branches[parentId].messages = snapshotMessages(
+      setBranchMessages(
+        t.branches[parentId],
         pickRicherTranscript(t.branches[parentId].messages || [], freeze)
       );
     }
@@ -604,7 +718,11 @@
       updatedAt: Date.now()
     };
     t.activeBranchId = newId;
+    t.ownerBranchId = newId;
     t.geminiTipBranchId = newId;
+    streamingBranchId = newId;
+    viewingAlternate = false;
+    setGeneratingUiSuppressed(false);
 
     const key = String(forkAt);
     const fork = t.forks[key] || { branchIds: [], activeIndex: 0 };
@@ -634,11 +752,26 @@
 
   async function onSendDetected() {
     if (!enabled || !chatId) return;
-    setTimeout(() => syncActiveFromDom(), 800);
+    const t = ensureThread();
+    // The branch the user is viewing owns this send — never merge into siblings.
+    const sendId = t.activeBranchId;
+    if (sendId && t.branches[sendId]) {
+      commitActiveBranch();
+      t.ownerBranchId = sendId;
+      t.geminiTipBranchId = sendId;
+      streamingBranchId = sendId;
+      viewingAlternate = false;
+      setGeneratingUiSuppressed(false);
+      if (t.branches[sendId].tip && t.branches[sendId].tip.responseId) {
+        bridgePost('set-tip-override', { tip: t.branches[sendId].tip });
+      }
+    }
+    setTimeout(() => syncBranchesFromDom(), 400);
+    setTimeout(() => syncBranchesFromDom(), 1200);
     setTimeout(() => {
       pendingEdit = null;
-      syncActiveFromDom();
-    }, 2500);
+      syncBranchesFromDom();
+    }, 2800);
   }
 
   async function onTip(tip) {
@@ -646,11 +779,19 @@
     if (!thread && !pendingEdit) return;
     const t = ensureThread();
     t.serverTip = tip;
-    const branch = activeBranch();
-    if (branch) {
-      branch.tip = { ...tip };
-      branch.updatedAt = Date.now();
-      if (viewingAlternate || pendingEdit) bridgePost('set-tip-override', { tip });
+    // Attribute the new tip to the streaming/owner branch — not whatever is on screen.
+    const targetId = streamingBranchId || ownerIdOf(t) || t.activeBranchId;
+    const target = targetId ? t.branches[targetId] : null;
+    if (target) {
+      target.tip = { ...tip };
+      target.updatedAt = Date.now();
+    }
+    // Continues from the viewed branch should use that branch's tip.
+    const viewed = activeBranch();
+    if (viewed && viewed.tip && viewed.tip.responseId) {
+      bridgePost('set-tip-override', { tip: viewed.tip });
+    } else if (target && (viewingAlternate || pendingEdit)) {
+      bridgePost('set-tip-override', { tip });
     }
     if (hasForks(t) || pendingEdit) await saveThread();
     schedulePaint();
@@ -663,46 +804,42 @@
     if (!fork || !fork.branchIds.includes(branchId)) return;
     const branch = t.branches[branchId];
     if (!branch) return;
+    if (branchId === t.activeBranchId) return;
 
-    const geminiTip = t.geminiTipBranchId || liveBranchId(fork);
-    let applied = true;
+    // Freeze the branch we're leaving so its reply never bleeds into the other.
+    commitActiveBranch();
 
-    if (branchId === geminiTip && liveDomBackup) {
-      bridgePost('clear-tip-override', {});
-      restoreLiveView();
-    } else if (branchId === geminiTip && !liveDomBackup) {
-      bridgePost('clear-tip-override', {});
-      document.querySelectorAll('[data-bg-timeline-clone]').forEach((n) => n.remove());
-      document.querySelectorAll('[data-bg-timeline-hide]').forEach((n) => {
-        n.style.display = '';
-        delete n.dataset.bgTimelineHide;
-      });
-      viewingAlternate = false;
-    } else {
-      if (!(branch.messages && branch.messages.length)) {
-        console.warn('[Better Gemini] cannot switch — version has no saved content');
-        schedulePaint();
-        return;
-      }
-      if (branch.tip && branch.tip.responseId) {
-        bridgePost('set-tip-override', { tip: branch.tip });
-      } else {
-        bridgePost('clear-tip-override', {});
-      }
-      applied = applyBranchInChat(forkAt, branch);
-      if (!applied) {
-        schedulePaint();
-        return;
-      }
+    if (!(branch.messages && branch.messages.length)) {
+      console.warn('[Better Gemini] cannot switch — version has no saved content');
+      schedulePaint();
+      return;
     }
 
     t.activeBranchId = branchId;
     fork.activeIndex = fork.branchIds.indexOf(branchId);
     alignForksToBranch(branchId);
 
+    // Always paint from that branch's own stored transcript (isolated).
+    const applied = paintBranchMessages(branch);
+    if (!applied) {
+      schedulePaint();
+      return;
+    }
+
+    const ownerId = ownerIdOf(t);
+    viewingAlternate = branchId !== ownerId;
+    setGeneratingUiSuppressed(viewingAlternate && (isGenerating() || Boolean(streamingBranchId)));
+
+    if (branch.tip && branch.tip.responseId) {
+      bridgePost('set-tip-override', { tip: branch.tip });
+    } else {
+      bridgePost('clear-tip-override', {});
+    }
+
     await saveThread();
     clearMessageFocusChrome();
     schedulePaint();
+    void forkAt;
   }
 
   function ensureControls() {
@@ -916,7 +1053,9 @@
     liveBuffer = [];
     lastGoodTranscript = [];
     liveDomBackup = null;
+    streamingBranchId = null;
     viewingAlternate = false;
+    setGeneratingUiSuppressed(false);
     scrubLegacyArtifacts();
     document.querySelectorAll('.bg-timeline-controls').forEach((n) => n.remove());
     bridgePost('clear-tip-override', {});
@@ -959,23 +1098,27 @@
 
   function watchDom() {
     const obs = new MutationObserver(() => {
-      if (!enabled) return;
+      if (!enabled || paintGuard) return;
       schedulePaint();
       const editing = document.querySelector(
         'user-query.edit-mode, user-query[class*="edit-mode"], user-query[editing], .edit-mode'
       );
       if (editing) noteEditModeOpen();
-      if (viewingAlternate) return;
       if (bufferTimer) clearTimeout(bufferTimer);
-      bufferTimer = setTimeout(() => refreshLiveBuffer(), 400);
+      bufferTimer = setTimeout(() => {
+        if (!viewingAlternate) refreshLiveBuffer();
+      }, 400);
       if (syncTimer) clearTimeout(syncTimer);
-      syncTimer = setTimeout(() => syncActiveFromDom(), 700);
+      // Always sync — when viewing another version this captures the owner stream
+      // into that branch only, then re-paints the viewed version.
+      syncTimer = setTimeout(() => syncBranchesFromDom(), 350);
     });
     obs.observe(document.documentElement, { childList: true, subtree: true });
     setInterval(() => onChatChanged(), 800);
     setInterval(() => {
-      if (enabled && chatId && !viewingAlternate) refreshLiveBuffer();
-    }, 2000);
+      if (enabled && chatId && !viewingAlternate && !isEditModeOpen()) refreshLiveBuffer();
+      if (enabled && chatId && hasForks(thread)) syncBranchesFromDom();
+    }, 1500);
   }
 
   function loadEnabled() {
@@ -1015,6 +1158,8 @@
             bridgePost('clear-tip-override', {});
             liveBuffer = [];
             preEditFreeze = null;
+            streamingBranchId = null;
+            setGeneratingUiSuppressed(false);
           } else {
             refreshLiveBuffer();
             schedulePaint();
@@ -1027,10 +1172,13 @@
   function watchRefreshSafety() {
     window.addEventListener('pageshow', () => {
       liveDomBackup = null;
+      streamingBranchId = null;
       viewingAlternate = false;
+      setGeneratingUiSuppressed(false);
       scrubLegacyArtifacts();
       bridgePost('clear-tip-override', {});
       if (thread && hasForks(thread)) {
+        if (!thread.ownerBranchId) thread.ownerBranchId = thread.geminiTipBranchId || thread.activeBranchId;
         resetForksToLive();
         schedulePaint();
       }

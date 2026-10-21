@@ -298,6 +298,18 @@ user-query:has(+ .bg-timeline-controls) [class*="user-query-bubble"] {
   box-shadow: none !important;
 }
 
+/* While viewing a version that is not the one generating, hide stop / busy chrome. */
+html.bg-timeline-suppress-gen button[aria-label*="Stop" i],
+html.bg-timeline-suppress-gen button[aria-label*="stop" i],
+html.bg-timeline-suppress-gen [data-test-id*="stop" i],
+html.bg-timeline-suppress-gen button.stop-button,
+html.bg-timeline-suppress-gen .stop-icon,
+html.bg-timeline-suppress-gen [aria-busy="true"] {
+  visibility: hidden !important;
+  pointer-events: none !important;
+  opacity: 0 !important;
+}
+
 body.dark-theme .bg-timeline-controls {
   color: #9aa0a6;
 }
