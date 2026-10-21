@@ -1,10 +1,8 @@
 /* Better Gemini — Claude-style parallel message versions in the same chat.
-   Never mutates Gemini message nodes or page CSS. Alternate versions render
-   in a closed shadow overlay. Continues are re-parented via tip override.
+   No custom chat overlay. Switching versions swaps text inside Gemini's own
+   message elements so styling stays Gemini's. Continues use tip override.
 
-   Works on existing chats: as soon as the feature is on, we keep a live text
-   buffer of the open chat. The first edit after enable freezes that buffer as
-   version 1 — no need to start a new chat. */
+   Works on existing chats: live text buffer freezes on edit — no new chat. */
 (function () {
   'use strict';
 
@@ -12,7 +10,7 @@
   const BRIDGE_SRC = 'better-gemini-bridge';
   const STORE_KEY = 'betterGeminiTimelines';
   const OVERLAY_ID = 'better-gemini-timeline-overlay';
-  const STORE_VERSION = 4;
+  const STORE_VERSION = 5;
   const MAX_CHATS = 40;
   const MAX_BRANCHES_PER_CHAT = 24;
 
@@ -21,13 +19,13 @@
   let chatId = null;
   let pendingEdit = null;
   let viewingAlternate = false;
+  let liveDomBackup = null;
   let paintScheduled = false;
   let syncTimer = null;
   let bufferTimer = null;
-  let liveBuffer = []; // rolling scrape of the open chat (works before any fork)
-  let preEditFreeze = null; // snapshot taken when the pencil editor opens
+  let liveBuffer = [];
+  let preEditFreeze = null;
   const bridgeWaiters = new Map();
-  let bridgeReqId = 0;
 
   function bridgePost(type, extra = {}) {
     window.postMessage({ source: BRIDGE_CMD, type, ...extra }, window.location.origin);
@@ -149,7 +147,6 @@
     });
   }
 
-  /** After an edit, the last id in branchIds is always the path Gemini is showing. */
   function liveBranchId(fork) {
     if (!fork || !fork.branchIds || !fork.branchIds.length) return null;
     return fork.branchIds[fork.branchIds.length - 1];
@@ -166,11 +163,9 @@
     });
   }
 
-  // ---- Read-only Gemini DOM (never write into message bodies) -------------
-
   function turnNodes() {
     return Array.from(document.querySelectorAll('user-query, model-response')).filter(
-      (n) => n && n.isConnected
+      (n) => n && n.isConnected && !n.dataset.bgTimelineClone
     );
   }
 
@@ -193,28 +188,42 @@
     return t.trim();
   }
 
-  function textOf(el) {
-    if (!el) return '';
-    const role = roleOf(el);
-    let box = el;
+  function contentBox(el, role) {
+    if (!el) return null;
     if (role === 'user') {
-      box =
+      return (
         el.querySelector('.query-text') ||
         el.querySelector('[class*="query-text"]') ||
         el.querySelector('.query-content') ||
-        el;
-    } else {
-      box =
-        el.querySelector('message-content') ||
-        el.querySelector('.markdown') ||
-        el.querySelector('.model-response-text') ||
-        el;
+        null
+      );
     }
+    return (
+      el.querySelector('message-content .markdown') ||
+      el.querySelector('.markdown') ||
+      el.querySelector('message-content') ||
+      el.querySelector('.model-response-text') ||
+      null
+    );
+  }
+
+  function textOf(el) {
+    if (!el) return '';
+    const role = roleOf(el);
+    const box = contentBox(el, role) || el;
     const clone = box.cloneNode(true);
     clone.querySelectorAll(
       '[aria-hidden="true"], .sr-only, .cdk-visually-hidden, .bg-timeline-controls'
     ).forEach((n) => n.remove());
     return cleanMessageText(clone.innerText || clone.textContent || '');
+  }
+
+  function setNativeText(el, role, text) {
+    const box = contentBox(el, role);
+    if (!box) return false;
+    // Only replace text inside Gemini's content node — keeps Gemini fonts/CSS.
+    box.textContent = cleanMessageText(text);
+    return true;
   }
 
   function scrapeMessages() {
@@ -250,7 +259,7 @@
       ? messages
       : turnNodes().filter((n) => roleOf(n) === 'user').map((n) => ({ role: 'user', text: textOf(n) }));
     for (let i = 0; i < source.length; i++) {
-      if (source[i].role === 'user') users.push({ i, text: source[i].text });
+      if (source[i].role === 'user') users.push({ text: source[i].text });
     }
     for (let u = users.length - 1; u >= 0; u--) {
       const t = users[u].text;
@@ -273,289 +282,80 @@
   }
 
   function scrubLegacyArtifacts() {
-    document.querySelectorAll('.bg-timeline-clone, .bg-timeline-replay').forEach((n) => n.remove());
-    document.querySelectorAll('.bg-timeline-hidden').forEach((n) => {
+    document.querySelectorAll('.bg-timeline-clone, .bg-timeline-replay, [data-bg-timeline-clone]').forEach((n) => n.remove());
+    document.querySelectorAll('.bg-timeline-hidden, [data-bg-timeline-hide]').forEach((n) => {
       n.classList.remove('bg-timeline-hidden');
+      n.style.display = '';
+      delete n.dataset.bgTimelineHide;
     });
-    hideOverlay();
+    const old = document.getElementById(OVERLAY_ID);
+    if (old) old.remove();
   }
 
-  // ---- Shadow overlay -----------------------------------------------------
-
-  function findChatScrollRoot() {
-    return (
-      document.querySelector('infinite-scroller') ||
-      document.querySelector('.chat-history') ||
-      document.querySelector('[data-test-id="chat-history"]') ||
-      document.querySelector('chat-window') ||
-      document.querySelector('main') ||
-      null
-    );
-  }
-
-  function hideOverlay() {
-    const host = document.getElementById(OVERLAY_ID);
-    if (host) {
-      if (host.__bgSync) {
-        window.removeEventListener('resize', host.__bgSync);
-        window.removeEventListener('scroll', host.__bgSync, true);
-        host.__bgSync = null;
+  function restoreLiveView() {
+    scrubLegacyArtifacts();
+    if (liveDomBackup && liveDomBackup.length) {
+      const nodes = turnNodes();
+      for (let i = 0; i < Math.min(nodes.length, liveDomBackup.length); i++) {
+        setNativeText(nodes[i], liveDomBackup[i].role, liveDomBackup[i].text);
       }
-      host.remove();
     }
+    liveDomBackup = null;
     viewingAlternate = false;
   }
 
-  function overlayStyles() {
-    const dark = document.body.classList.contains('dark-theme');
-    return `
-      :host {
-        all: initial;
-        display: block;
-        font-family: "Google Sans", "Google Sans Text", Roboto, Arial, Helvetica, sans-serif;
-        color: ${dark ? '#e3e3e3' : '#1f1f1f'};
-      }
-      .wrap {
-        box-sizing: border-box;
-        height: 100%;
-        overflow: auto;
-        padding: 16px 16px 96px;
-        background: ${dark ? '#131314' : '#fff'};
-      }
-      .banner {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        flex-wrap: wrap;
-        gap: 10px 16px;
-        margin: 0 auto 20px;
-        max-width: 800px;
-        padding: 10px 14px;
-        border-radius: 12px;
-        background: ${dark ? '#2d2e30' : '#f0f4f9'};
-        font-size: 13px;
-        color: ${dark ? '#c4c7c5' : '#444746'};
-        position: sticky;
-        top: 0;
-        z-index: 2;
-      }
-      .banner-left { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-      .banner-left strong { font-weight: 500; color: inherit; }
-      .banner-right {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        flex-shrink: 0;
-      }
-      .banner-link {
-        appearance: none;
-        border: none;
-        background: transparent;
-        color: ${dark ? '#a8c7fa' : '#0b57d0'};
-        cursor: pointer;
-        font: inherit;
-        font-weight: 500;
-        padding: 4px 8px;
-        white-space: nowrap;
-      }
-      .msg {
-        max-width: 800px;
-        margin: 0 auto 20px;
-        line-height: 1.6;
-        font-size: 16px;
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
-      .msg-user {
-        width: fit-content;
-        max-width: min(800px, 92%);
-        margin-left: auto;
-        margin-right: auto;
-        margin-bottom: 20px;
-        padding: 12px 16px;
-        border-radius: 18px;
-        background: ${dark ? '#2d2e30' : '#f0f4f9'};
-      }
-      .msg-model { padding: 4px 0; }
-      .empty {
-        max-width: 800px;
-        margin: 48px auto;
-        text-align: center;
-        color: ${dark ? '#9aa0a6' : '#5f6368'};
-        font-size: 14px;
-      }
-      .controls {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        user-select: none;
-        font-size: 13px;
-        color: ${dark ? '#e8eaed' : '#202124'};
-      }
-      .controls button {
-        appearance: none;
-        border: 1px solid ${dark ? 'rgba(232,234,237,0.2)' : 'rgba(60,64,67,0.2)'};
-        background: ${dark ? '#1e1f20' : '#fff'};
-        color: inherit;
-        cursor: pointer;
-        padding: 4px 10px;
-        border-radius: 8px;
-        font-size: 16px;
-        line-height: 1;
-        min-width: 32px;
-      }
-      .controls button:disabled { opacity: 0.35; cursor: default; }
-      .controls button:hover:not(:disabled) {
-        background: ${dark ? 'rgba(232,234,237,0.08)' : 'rgba(60,64,67,0.08)'};
-      }
-      .count {
-        font-variant-numeric: tabular-nums;
-        min-width: 2.75em;
-        text-align: center;
-        font-weight: 600;
-      }
-    `;
-  }
-
-  function placeOverlayHost(host, root) {
-    const sync = () => {
-      const r = root.getBoundingClientRect();
-      host.style.top = `${Math.max(0, r.top)}px`;
-      host.style.left = `${Math.max(0, r.left)}px`;
-      host.style.width = `${Math.max(0, r.width)}px`;
-      host.style.height = `${Math.max(0, r.height)}px`;
-    };
-    sync();
-    if (host.__bgSync) {
-      window.removeEventListener('resize', host.__bgSync);
-      window.removeEventListener('scroll', host.__bgSync, true);
-    }
-    host.__bgSync = sync;
-    window.addEventListener('resize', sync);
-    window.addEventListener('scroll', sync, true);
-  }
-
-  function buildVersionControls(forkAt, fork, idx, total) {
-    const controls = document.createElement('div');
-    controls.className = 'controls';
-    controls.setAttribute('role', 'group');
-    controls.setAttribute('aria-label', 'Message versions');
-
-    const prev = document.createElement('button');
-    prev.type = 'button';
-    prev.setAttribute('aria-label', 'Previous version');
-    prev.textContent = '\u2039';
-    prev.disabled = idx <= 0;
-
-    const count = document.createElement('span');
-    count.className = 'count';
-    count.textContent = `${idx + 1} / ${total}`;
-
-    const next = document.createElement('button');
-    next.type = 'button';
-    next.setAttribute('aria-label', 'Next version');
-    next.textContent = '\u203A';
-    next.disabled = idx >= total - 1;
-
-    prev.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (idx > 0) selectBranch(forkAt, fork.branchIds[idx - 1]);
-    });
-    next.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (idx < total - 1) selectBranch(forkAt, fork.branchIds[idx + 1]);
-    });
-
-    controls.appendChild(prev);
-    controls.appendChild(count);
-    controls.appendChild(next);
-    return controls;
-  }
-
-  function showOverlay(forkAt, branch, fork) {
-    const root = findChatScrollRoot();
-    if (!root) return;
-
-    let host = document.getElementById(OVERLAY_ID);
-    if (!host) {
-      host = document.createElement('div');
-      host.id = OVERLAY_ID;
-      host.style.cssText = 'position:fixed;z-index:2147483000;pointer-events:auto;';
-      document.body.appendChild(host);
-    }
-    placeOverlayHost(host, root);
-    let shadow = host.shadowRoot;
-    if (!shadow) shadow = host.attachShadow({ mode: 'open' });
-
+  function applyBranchInChat(forkAt, branch) {
     const msgs = (branch.messages || []).map((m) => ({
       role: m.role,
       text: cleanMessageText(m.text)
     }));
+    if (!msgs.length) return;
 
-    const total = fork.branchIds.length;
-    const idx = Math.max(0, Math.min(fork.activeIndex || 0, total - 1));
+    let base = turnNodes();
+    if (!base.length) return;
 
-    clearChildren(shadow);
-    const style = document.createElement('style');
-    style.textContent = overlayStyles();
-    shadow.appendChild(style);
-
-    const wrap = document.createElement('div');
-    wrap.className = 'wrap';
-
-    const banner = document.createElement('div');
-    banner.className = 'banner';
-
-    const left = document.createElement('div');
-    left.className = 'banner-left';
-    const strong = document.createElement('strong');
-    strong.textContent = `Version ${idx + 1} of ${total}`;
-    const hint = document.createElement('span');
-    hint.textContent = 'Saved copy — Gemini underneath is unchanged';
-    left.appendChild(strong);
-    left.appendChild(hint);
-
-    const right = document.createElement('div');
-    right.className = 'banner-right';
-    // Always show both arrows here so > is never lost after pressing <.
-    right.appendChild(buildVersionControls(forkAt, fork, idx, total));
-
-    const liveBtn = document.createElement('button');
-    liveBtn.type = 'button';
-    liveBtn.className = 'banner-link';
-    liveBtn.textContent = 'Show current';
-    liveBtn.addEventListener('click', () => {
-      const liveId = liveBranchId(fork);
-      if (liveId) selectBranch(forkAt, liveId);
-    });
-    right.appendChild(liveBtn);
-
-    banner.appendChild(left);
-    banner.appendChild(right);
-    wrap.appendChild(banner);
-
-    if (!msgs.length) {
-      const empty = document.createElement('div');
-      empty.className = 'empty';
-      empty.textContent =
-        'No saved text for this version. Open edit on a message (pencil) before updating so the prior reply can be captured.';
-      wrap.appendChild(empty);
-    } else {
-      for (const msg of msgs) {
-        const el = document.createElement('div');
-        el.className = msg.role === 'user' ? 'msg msg-user' : 'msg msg-model';
-        el.textContent = msg.text || '';
-        wrap.appendChild(el);
-      }
+    if (!viewingAlternate) {
+      liveDomBackup = base.map((n) => ({ role: roleOf(n), text: textOf(n) }));
     }
 
-    shadow.appendChild(wrap);
+    scrubLegacyArtifacts();
+    base = turnNodes();
+    if (liveDomBackup && liveDomBackup.length) {
+      for (let i = 0; i < Math.min(base.length, liveDomBackup.length); i++) {
+        setNativeText(base[i], liveDomBackup[i].role, liveDomBackup[i].text);
+      }
+      base = turnNodes();
+    }
+
+    const userNodes = base.filter((n) => roleOf(n) === 'user');
+    const forkUser = userNodes[Math.min(Math.max(0, forkAt), Math.max(0, userNodes.length - 1))];
+    const forkIndex = forkUser ? base.indexOf(forkUser) : 0;
+
+    let userSeen = -1;
+    let msgStart = 0;
+    for (let i = 0; i < msgs.length; i++) {
+      if (msgs[i].role === 'user') {
+        userSeen++;
+        if (userSeen === forkAt) {
+          msgStart = i;
+          break;
+        }
+      }
+    }
+    const slice = msgs.slice(msgStart);
+
+    let mi = 0;
+    for (let ni = forkIndex; ni < base.length && mi < slice.length; ni++, mi++) {
+      setNativeText(base[ni], slice[mi].role || roleOf(base[ni]), slice[mi].text);
+    }
+
+    for (let ni = forkIndex + slice.length; ni < base.length; ni++) {
+      base[ni].style.display = 'none';
+      base[ni].dataset.bgTimelineHide = '1';
+    }
+
     viewingAlternate = true;
   }
-
-  // ---- Branch ops ----------------------------------------------------------
 
   async function syncActiveFromDom() {
     if (!enabled || !chatId || viewingAlternate) return;
@@ -564,12 +364,10 @@
     const t = ensureThread();
     const branch = activeBranch();
     if (!branch) return;
-    // Only overwrite the live (latest) branch from the DOM.
     const forkKeys = Object.keys(t.forks);
     let onLive = !forkKeys.length;
     for (const key of forkKeys) {
-      const fork = t.forks[key];
-      if (liveBranchId(fork) === branch.id) onLive = true;
+      if (liveBranchId(t.forks[key]) === branch.id) onLive = true;
     }
     if (!onLive && !pendingEdit) return;
 
@@ -586,7 +384,7 @@
     if (!enabled || !chatId) return;
     if (!meta || !meta.isEdit) return;
 
-    hideOverlay();
+    restoreLiveView();
     const t = ensureThread();
     const freeze = bestFreezeMessages();
     preEditFreeze = null;
@@ -608,7 +406,6 @@
       messages: freeze,
       updatedAt: Date.now()
     };
-    // Keep the pre-edit transcript + replies as version N.
     if (freeze.length) oldBranch.messages = freeze;
     if (!oldBranch.tip && t.serverTip) oldBranch.tip = { ...t.serverTip };
     t.branches[oldId] = oldBranch;
@@ -628,26 +425,10 @@
 
     const key = String(forkAt);
     const fork = t.forks[key] || { branchIds: [], activeIndex: 0 };
-    // Preserve history order: older versions first, new live path last.
     if (!fork.branchIds.includes(oldId)) fork.branchIds.push(oldId);
-    if (!fork.branchIds.includes(newId)) fork.branchIds.push(newId);
-    // Move newId to the end so liveBranchId() is correct.
     fork.branchIds = fork.branchIds.filter((id) => id !== newId).concat([newId]);
     fork.activeIndex = fork.branchIds.length - 1;
     t.forks[key] = fork;
-
-    const bIds = Object.keys(t.branches);
-    if (bIds.length > MAX_BRANCHES_PER_CHAT) {
-      bIds.sort((a, b) => (t.branches[a].updatedAt || 0) - (t.branches[b].updatedAt || 0));
-      while (Object.keys(t.branches).length > MAX_BRANCHES_PER_CHAT) {
-        const drop = bIds.shift();
-        if (!drop || drop === t.activeBranchId) continue;
-        if (fork.branchIds.includes(drop) && fork.branchIds.length <= 2) continue;
-        delete t.branches[drop];
-        fork.branchIds = fork.branchIds.filter((id) => id !== drop);
-      }
-      fork.activeIndex = Math.max(0, fork.branchIds.indexOf(newId));
-    }
 
     pendingEdit = { forkAt, newId, oldId };
     await saveThread();
@@ -692,54 +473,40 @@
 
     const liveId = liveBranchId(fork);
     if (branchId === liveId) {
-      // Live Gemini path — never cover it with the overlay.
       bridgePost('clear-tip-override', {});
-      hideOverlay();
+      restoreLiveView();
     } else {
       if (branch.tip && branch.tip.responseId) {
         bridgePost('set-tip-override', { tip: branch.tip });
       } else {
         bridgePost('clear-tip-override', {});
       }
-      showOverlay(forkAt, branch, fork);
+      applyBranchInChat(forkAt, branch);
     }
 
     await saveThread();
     schedulePaint();
   }
 
-  // ---- Controls on the live Gemini user turn ------------------------------
-
   function ensureControls() {
     if (!enabled || !thread || !hasForks(thread)) {
       document.querySelectorAll('.bg-timeline-controls').forEach((n) => n.remove());
       return;
     }
-    if (viewingAlternate) {
-      document.querySelectorAll('.bg-timeline-controls').forEach((n) => n.remove());
-      return;
-    }
 
     const t = thread;
-    const userNodes = turnNodes().filter((n) => roleOf(n) === 'user');
+    const userNodes = turnNodes().filter((n) => roleOf(n) === 'user' && n.style.display !== 'none');
     const keep = new Set();
 
     Object.keys(t.forks).forEach((key) => {
       const forkAt = Number(key);
       const fork = t.forks[key];
       if (!fork || !fork.branchIds || fork.branchIds.length < 2) return;
-      const host = userNodes[forkAt];
+      const host = userNodes[forkAt] || turnNodes().filter((n) => roleOf(n) === 'user')[forkAt];
       if (!host) return;
 
       const total = fork.branchIds.length;
-      // On the live Gemini view, always reflect the live (last) index.
-      const liveIdx = total - 1;
-      if (fork.activeIndex !== liveIdx && !viewingAlternate) {
-        // Keep stored index for overlay, but show live controls as N/N.
-      }
-      const idx = viewingAlternate
-        ? Math.max(0, Math.min(fork.activeIndex || 0, total - 1))
-        : liveIdx;
+      const idx = Math.max(0, Math.min(fork.activeIndex || 0, total - 1));
       keep.add(key);
 
       let row =
@@ -783,7 +550,6 @@
         row.appendChild(next);
       }
 
-      // Live Gemini view: show "2 / 2" with < enabled and > disabled.
       label.textContent = `${idx + 1} / ${total}`;
       prev.disabled = idx <= 0;
       next.disabled = idx >= total - 1;
@@ -796,7 +562,7 @@
 
   function onControlsClick(event) {
     const btn = event.target && event.target.closest && event.target.closest('.bg-timeline-btn');
-    if (!btn || !enabled || !thread || viewingAlternate) return;
+    if (!btn || !enabled || !thread) return;
     const row = btn.closest('.bg-timeline-controls');
     if (!row) return;
 
@@ -807,13 +573,10 @@
     const forkAt = Number(row.dataset.forkAt);
     const fork = thread.forks[String(forkAt)];
     if (!fork || !fork.branchIds || fork.branchIds.length < 2) return;
-
-    // From the live Gemini view, active visual index is always the last.
-    const idx = fork.branchIds.length - 1;
+    const idx = Math.max(0, Math.min(fork.activeIndex || 0, fork.branchIds.length - 1));
     const dir = btn.dataset.dir;
-    if (dir === 'prev' && idx > 0) {
-      selectBranch(forkAt, fork.branchIds[idx - 1]);
-    } else if (dir === 'next' && idx < fork.branchIds.length - 1) {
+    if (dir === 'prev' && idx > 0) selectBranch(forkAt, fork.branchIds[idx - 1]);
+    else if (dir === 'next' && idx < fork.branchIds.length - 1) {
       selectBranch(forkAt, fork.branchIds[idx + 1]);
     }
   }
@@ -840,8 +603,6 @@
     if (msgs.length) preEditFreeze = msgs;
   }
 
-  // ---- Lifecycle -----------------------------------------------------------
-
   async function onChatChanged() {
     const next = conversationId();
     if (next === chatId) return;
@@ -849,8 +610,8 @@
     pendingEdit = null;
     preEditFreeze = null;
     liveBuffer = [];
-    // Refresh / chat switch: always show clean Gemini, never an overlay.
-    hideOverlay();
+    liveDomBackup = null;
+    viewingAlternate = false;
     scrubLegacyArtifacts();
     document.querySelectorAll('.bg-timeline-controls').forEach((n) => n.remove());
     bridgePost('clear-tip-override', {});
@@ -895,12 +656,10 @@
     const obs = new MutationObserver(() => {
       if (!enabled) return;
       schedulePaint();
-
       const editing = document.querySelector(
         'user-query.edit-mode, user-query[class*="edit-mode"], user-query[editing], .edit-mode'
       );
       if (editing) noteEditModeOpen();
-
       if (viewingAlternate) return;
       if (bufferTimer) clearTimeout(bufferTimer);
       bufferTimer = setTimeout(() => refreshLiveBuffer(), 400);
@@ -909,7 +668,6 @@
     });
     obs.observe(document.documentElement, { childList: true, subtree: true });
     setInterval(() => onChatChanged(), 800);
-    // Keep buffer warm even without mutations.
     setInterval(() => {
       if (enabled && chatId && !viewingAlternate) refreshLiveBuffer();
     }, 2000);
@@ -946,7 +704,7 @@
         if (area === 'sync' && changes.showTimelines) {
           enabled = changes.showTimelines.newValue !== false;
           if (!enabled) {
-            hideOverlay();
+            restoreLiveView();
             scrubLegacyArtifacts();
             document.querySelectorAll('.bg-timeline-controls').forEach((n) => n.remove());
             bridgePost('clear-tip-override', {});
@@ -962,10 +720,10 @@
   }
 
   function watchRefreshSafety() {
-    // Always land on clean Gemini after reload / back-forward cache.
     window.addEventListener('pageshow', () => {
+      liveDomBackup = null;
+      viewingAlternate = false;
       scrubLegacyArtifacts();
-      hideOverlay();
       bridgePost('clear-tip-override', {});
       if (thread && hasForks(thread)) {
         resetForksToLive();
@@ -995,7 +753,6 @@
 
     await loadEnabled();
     document.addEventListener('click', onControlsClick, true);
-    // Capture the moment the user opens the pencil (before Update).
     document.addEventListener(
       'click',
       (e) => {

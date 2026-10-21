@@ -271,15 +271,23 @@ body.dark-theme .better-gemini-usage.level-danger,
   align-items: center;
   gap: 6px;
   margin: 4px 0 0;
+  padding: 0;
+  width: auto;
+  max-width: none;
+  flex: 0 0 auto;
+  white-space: nowrap;
   user-select: none;
-  font-family: "Google Sans", "Google Sans Text", Roboto, Arial, Helvetica, sans-serif;
+  font: inherit;
   font-size: 13px;
   line-height: 1;
-  color: #5f6368;
+  color: inherit;
+  opacity: 0.72;
+  writing-mode: horizontal-tb;
 }
 
 body.dark-theme .bg-timeline-controls {
-  color: #9aa0a6;
+  color: inherit;
+  opacity: 0.8;
 }
 
 .bg-timeline-btn {
@@ -312,9 +320,6 @@ body.dark-theme .bg-timeline-btn:hover:not(:disabled) {
   min-width: 2.75em;
   text-align: center;
   font-weight: 500;
-  color: #202124;
-}
-
-body.dark-theme .bg-timeline-count {
-  color: #e8eaed;
+  color: inherit;
+  opacity: 1;
 }
