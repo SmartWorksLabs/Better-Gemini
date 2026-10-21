@@ -24,9 +24,9 @@ chrome.runtime.onInstalled.addListener((details) => {
         chrome.storage.sync.set({ showTimelines: true });
       }
     });
-    // v1.2.5: in-chat version switch (no overlay UI).
+    // v1.2.6: store HTML snapshots so version switch keeps Gemini wrapping.
     chrome.storage.local.remove(['betterGeminiTimelines']);
-    chrome.storage.local.set({ betterGeminiTimelinesVersion: 5 });
+    chrome.storage.local.set({ betterGeminiTimelinesVersion: 6 });
   }
   // Older versions stored a theme flag and an unused reveal counter.
   chrome.storage.local.remove(['darkTheme', 'interactionsCount']);

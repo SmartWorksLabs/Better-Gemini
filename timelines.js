@@ -10,7 +10,7 @@
   const BRIDGE_SRC = 'better-gemini-bridge';
   const STORE_KEY = 'betterGeminiTimelines';
   const OVERLAY_ID = 'better-gemini-timeline-overlay';
-  const STORE_VERSION = 5;
+  const STORE_VERSION = 6;
   const MAX_CHATS = 40;
   const MAX_BRANCHES_PER_CHAT = 24;
 
@@ -198,11 +198,13 @@
         null
       );
     }
+    // Prefer the full reply shell (tables, code, math, lists live here),
+    // not a nested .markdown fragment that can miss pieces.
     return (
-      el.querySelector('message-content .markdown') ||
-      el.querySelector('.markdown') ||
       el.querySelector('message-content') ||
+      el.querySelector('.markdown-main-panel') ||
       el.querySelector('.model-response-text') ||
+      el.querySelector('.markdown') ||
       null
     );
   }
@@ -218,12 +220,50 @@
     return cleanMessageText(clone.innerText || clone.textContent || '');
   }
 
-  function setNativeText(el, role, text) {
+  function htmlOf(el) {
+    if (!el) return '';
+    const role = roleOf(el);
+    const box = contentBox(el, role);
+    if (!box) return '';
+    const clone = box.cloneNode(true);
+    clone.querySelectorAll('.bg-timeline-controls').forEach((n) => n.remove());
+    try {
+      return clone.innerHTML || '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /** Restore Gemini's own HTML into a content box (no innerHTML write — Trusted Types safe). */
+  function fillBoxFromHtml(box, html) {
+    if (!box || !html) return false;
+    try {
+      const parsed = new DOMParser().parseFromString(
+        `<div data-bg-root="1">${html}</div>`,
+        'text/html'
+      );
+      const root = parsed.querySelector('[data-bg-root]');
+      if (!root) return false;
+      while (box.firstChild) box.removeChild(box.firstChild);
+      Array.from(root.childNodes).forEach((n) => {
+        box.appendChild(document.importNode(n, true));
+      });
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function setNativeContent(el, role, payload) {
     const box = contentBox(el, role);
     if (!box) return false;
-    // Only replace text inside Gemini's content node — keeps Gemini fonts/CSS.
-    box.textContent = cleanMessageText(text);
-    return true;
+    // Prefer exact HTML snapshot so wrapping, spacing, and markup stay Gemini's.
+    if (payload && payload.html && fillBoxFromHtml(box, payload.html)) return true;
+    if (payload && typeof payload.text === 'string') {
+      box.textContent = payload.text;
+      return true;
+    }
+    return false;
   }
 
   function scrapeMessages() {
@@ -232,23 +272,32 @@
       const role = roleOf(el);
       if (!role) continue;
       const text = textOf(el);
-      if (!text && role === 'model') continue;
-      out.push({ role, text });
+      const html = htmlOf(el);
+      if (!text && !html && role === 'model') continue;
+      out.push({ role, text, html });
     }
     return out;
+  }
+
+  function snapshotMessages(list) {
+    return (list || []).map((m) => ({
+      role: m.role,
+      text: typeof m.text === 'string' ? m.text : '',
+      html: typeof m.html === 'string' ? m.html : ''
+    }));
   }
 
   function refreshLiveBuffer() {
     if (!enabled || !chatId || viewingAlternate) return;
     const msgs = scrapeMessages();
     if (!msgs.length) return;
-    liveBuffer = msgs.map((m) => ({ role: m.role, text: cleanMessageText(m.text) }));
+    liveBuffer = snapshotMessages(msgs);
   }
 
   function bestFreezeMessages() {
-    if (preEditFreeze && preEditFreeze.length) return preEditFreeze.slice();
-    if (liveBuffer.length) return liveBuffer.slice();
-    return scrapeMessages().map((m) => ({ role: m.role, text: cleanMessageText(m.text) }));
+    if (preEditFreeze && preEditFreeze.length) return snapshotMessages(preEditFreeze);
+    if (liveBuffer.length) return snapshotMessages(liveBuffer);
+    return snapshotMessages(scrapeMessages());
   }
 
   function userTurnIndexFromPrompt(prompt, messages) {
@@ -297,7 +346,7 @@
     if (liveDomBackup && liveDomBackup.length) {
       const nodes = turnNodes();
       for (let i = 0; i < Math.min(nodes.length, liveDomBackup.length); i++) {
-        setNativeText(nodes[i], liveDomBackup[i].role, liveDomBackup[i].text);
+        setNativeContent(nodes[i], liveDomBackup[i].role, liveDomBackup[i]);
       }
     }
     liveDomBackup = null;
@@ -305,24 +354,25 @@
   }
 
   function applyBranchInChat(forkAt, branch) {
-    const msgs = (branch.messages || []).map((m) => ({
-      role: m.role,
-      text: cleanMessageText(m.text)
-    }));
+    const msgs = snapshotMessages(branch.messages || []);
     if (!msgs.length) return;
 
     let base = turnNodes();
     if (!base.length) return;
 
     if (!viewingAlternate) {
-      liveDomBackup = base.map((n) => ({ role: roleOf(n), text: textOf(n) }));
+      liveDomBackup = base.map((n) => ({
+        role: roleOf(n),
+        text: textOf(n),
+        html: htmlOf(n)
+      }));
     }
 
     scrubLegacyArtifacts();
     base = turnNodes();
     if (liveDomBackup && liveDomBackup.length) {
       for (let i = 0; i < Math.min(base.length, liveDomBackup.length); i++) {
-        setNativeText(base[i], liveDomBackup[i].role, liveDomBackup[i].text);
+        setNativeContent(base[i], liveDomBackup[i].role, liveDomBackup[i]);
       }
       base = turnNodes();
     }
@@ -346,7 +396,7 @@
 
     let mi = 0;
     for (let ni = forkIndex; ni < base.length && mi < slice.length; ni++, mi++) {
-      setNativeText(base[ni], slice[mi].role || roleOf(base[ni]), slice[mi].text);
+      setNativeContent(base[ni], slice[mi].role || roleOf(base[ni]), slice[mi]);
     }
 
     for (let ni = forkIndex + slice.length; ni < base.length; ni++) {
@@ -373,7 +423,7 @@
 
     const msgs = liveBuffer.length ? liveBuffer : scrapeMessages();
     if (!msgs.length) return;
-    branch.messages = msgs.map((m) => ({ role: m.role, text: cleanMessageText(m.text) }));
+    branch.messages = snapshotMessages(msgs);
     branch.updatedAt = Date.now();
     if (t.serverTip) branch.tip = { ...t.serverTip };
     await saveThread();
@@ -406,19 +456,21 @@
       messages: freeze,
       updatedAt: Date.now()
     };
-    if (freeze.length) oldBranch.messages = freeze;
+    if (freeze.length) oldBranch.messages = snapshotMessages(freeze);
     if (!oldBranch.tip && t.serverTip) oldBranch.tip = { ...t.serverTip };
     t.branches[oldId] = oldBranch;
 
     const newId = uid('b');
-    const prefix = msgIndex >= 0 ? freeze.slice(0, msgIndex) : freeze.slice();
+    const prefix = snapshotMessages(msgIndex >= 0 ? freeze.slice(0, msgIndex) : freeze.slice());
     const newPrompt = cleanMessageText(meta.prompt || '');
     t.branches[newId] = {
       id: newId,
       parentId: oldId,
       forkAt,
       tip: null,
-      messages: newPrompt ? prefix.concat([{ role: 'user', text: newPrompt }]) : prefix.slice(),
+      messages: newPrompt
+        ? prefix.concat([{ role: 'user', text: newPrompt, html: '' }])
+        : prefix.slice(),
       updatedAt: Date.now()
     };
     t.activeBranchId = newId;
@@ -597,9 +649,7 @@
   function noteEditModeOpen() {
     if (!enabled || !chatId || viewingAlternate) return;
     refreshLiveBuffer();
-    const msgs = liveBuffer.length
-      ? liveBuffer.slice()
-      : scrapeMessages().map((m) => ({ role: m.role, text: cleanMessageText(m.text) }));
+    const msgs = liveBuffer.length ? snapshotMessages(liveBuffer) : snapshotMessages(scrapeMessages());
     if (msgs.length) preEditFreeze = msgs;
   }
 

@@ -277,17 +277,18 @@ body.dark-theme .better-gemini-usage.level-danger,
   flex: 0 0 auto;
   white-space: nowrap;
   user-select: none;
-  font: inherit;
-  font-size: 13px;
+  font-family: "Google Sans", "Google Sans Text", Roboto, Arial, Helvetica, sans-serif !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  font-style: normal !important;
   line-height: 1;
-  color: inherit;
-  opacity: 0.72;
+  color: #5f6368;
+  opacity: 1;
   writing-mode: horizontal-tb;
 }
 
 body.dark-theme .bg-timeline-controls {
-  color: inherit;
-  opacity: 0.8;
+  color: #9aa0a6;
 }
 
 .bg-timeline-btn {
@@ -298,6 +299,7 @@ body.dark-theme .bg-timeline-controls {
   cursor: pointer;
   padding: 2px 6px;
   border-radius: 4px;
+  font-family: inherit !important;
   font-size: 16px;
   line-height: 1;
 }
@@ -316,10 +318,10 @@ body.dark-theme .bg-timeline-btn:hover:not(:disabled) {
 }
 
 .bg-timeline-count {
+  font-family: inherit !important;
   font-variant-numeric: tabular-nums;
   min-width: 2.75em;
   text-align: center;
   font-weight: 500;
   color: inherit;
-  opacity: 1;
 }
