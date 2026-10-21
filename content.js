@@ -13,19 +13,27 @@
   const MAX_PLACEMENT_STEPS = 60;
 
   const SYNC_KEYS = [
-    'corner', 'hiddenOpacity', 'typeToChat', 'avoidOverlap',
-    'hideDelayEnabled', 'hideDelayMs', 'hideDelayUnit', 'pillStyle', 'revealMode', 'firstInstalledDate'
+    'corner', 'usageCorner', 'hiddenOpacity', 'typeToChat', 'avoidOverlap',
+    'hideDelayEnabled', 'hideDelayMs', 'hideDelayUnit', 'pillStyle', 'revealMode',
+    'showUsage', 'showContext', 'firstInstalledDate'
   ];
-  const TOGGLE_KEYS = ['typeToChat', 'avoidOverlap', 'hideDelayEnabled'];
+  const TOGGLE_KEYS = ['typeToChat', 'avoidOverlap', 'hideDelayEnabled', 'showUsage', 'showContext'];
 
   const DELAY_UNITS = { ms: 1, s: 1000, min: 60000 };
   const DELAY_SLIDER_MAX_MS = 5000;
   const DELAY_MAX_MS = 60 * 60000;
   const PILL_STYLES = ['label', 'icon'];
   const REVEAL_MODES = ['hover', 'click'];
+  const CORNERS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+  const CONTEXT_TIERS = [32000, 128000, 1000000];
+  const WARN_AT = 0.75;
+  const DANGER_AT = 0.9;
+  const BRIDGE_CMD = 'better-gemini-bridge-cmd';
+  const BRIDGE_SRC = 'better-gemini-bridge';
 
   let settings = {
     corner: 'top-left',
+    usageCorner: 'top-right',
     hiddenOpacity: 0,
     revealMode: 'hover',
     typeToChat: true,
@@ -34,6 +42,8 @@
     hideDelayMs: 500,
     hideDelayUnit: 'ms',
     pillStyle: 'label',
+    showUsage: true,
+    showContext: true,
     firstInstalledDate: Date.now()
   };
 
@@ -42,6 +52,14 @@
   let shadowRoot = null;
   let menuOpen = false;
   let placementScheduled = false;
+  let usageHostElement = null;
+  let usageShadowRoot = null;
+  let usageStackElement = null;
+  let contextElement = null;
+  let usageState = { current: null, weekly: null, updatedAt: 0 };
+  let contextState = { tokens: 0, limit: 32000, estimated: true };
+  let bridgeReady = false;
+  let usageFetchId = 0;
 
   // Load settings from storage
   function loadSettings() {
@@ -136,28 +154,47 @@
   // Decides whether the element hit at (px, py) is something the pill should
   // not cover: buttons, logos, other extensions' widgets. Big layout pieces
   // (side rails, top bars, the page itself) are not obstacles; the items
-  // inside them are. Returns { rect } for obstacles, or null.
+  // inside them are. Returns { rect, content } for obstacles, or null.
+  // content: true when the hit is scrolling chat text — prefer stacking under
+  // rather than sitting beside it.
   function asObstacle(el, px, py, viewport) {
     if (el === document.documentElement || el === document.body) return null;
-    if (el === hostElement) return null;
+    if (el.id === 'better-gemini-context' || el.closest('#better-gemini-context')) return null;
+
+    // Our own floating hosts (shadow roots) — use the visible widget size.
+    if (el === usageHostElement && usageStackElement) {
+      return { rect: usageStackElement.getBoundingClientRect(), content: false };
+    }
+    if (el === hostElement && pillElement) {
+      return { rect: pillElement.getBoundingClientRect(), content: false };
+    }
 
     // The chat bar counts even while hidden, since it can come back at any time.
     const bar = el.closest('.hide-chatbar-bar');
-    if (bar) return { rect: bar.getBoundingClientRect() };
+    if (bar) return { rect: bar.getBoundingClientRect(), content: false };
 
     const style = getComputedStyle(el);
     if (style.visibility === 'hidden' || style.opacity === '0') return null;
-    if (isInsideScrollingArea(el)) return null;
+
+    // Scrolling conversation text: only treat as an obstacle when the hit is
+    // actual text, so the pill can sit beside chrome but not on top of words.
+    if (isInsideScrollingArea(el)) {
+      const line = textLineAt(el, px, py);
+      return line ? { rect: line.rect, content: true } : null;
+    }
 
     // A hit outside the element's own box means it is drawing content that
     // lives elsewhere, such as another extension's widget inside a shadow
     // root. Its real size can't be measured, so the caller steps past it.
     const rect = el.getBoundingClientRect();
     const containsPoint = px >= rect.left && px <= rect.right && py >= rect.top && py <= rect.bottom;
-    if (!containsPoint || rect.width === 0 || rect.height === 0) return { rect: null };
+    if (!containsPoint || rect.width === 0 || rect.height === 0) return { rect: null, content: false };
 
-    if (rect.width > viewport.width * 0.5 || rect.height > viewport.height * 0.5) return textLineAt(el, px, py);
-    return { rect };
+    if (rect.width > viewport.width * 0.5 || rect.height > viewport.height * 0.5) {
+      const line = textLineAt(el, px, py);
+      return line ? { rect: line.rect, content: true } : null;
+    }
+    return { rect, content: false };
   }
 
   // Wide elements can still hold text, like the "Gemini can make mistakes"
@@ -188,8 +225,8 @@
   }
 
   // Checks a grid of points across the given box and returns the first
-  // obstacle found.
-  function findObstacle(x, y, width, height, viewport) {
+  // obstacle found. excludeEl is the host of the widget being placed.
+  function findObstacle(x, y, width, height, viewport, excludeEl) {
     const xs = samplePoints(x, width);
     const ys = samplePoints(y, height);
 
@@ -197,7 +234,7 @@
       for (const px of xs) {
         if (px < 0 || py < 0 || px >= viewport.width || py >= viewport.height) continue;
 
-        const topElement = document.elementsFromPoint(px, py).find((el) => el !== hostElement);
+        const topElement = document.elementsFromPoint(px, py).find((el) => el !== excludeEl);
         const obstacle = topElement && asObstacle(topElement, px, py, viewport);
         if (obstacle) return obstacle;
       }
@@ -229,7 +266,9 @@
     for (const side of ['left', 'right']) {
       const x = side === 'left' ? 1 : viewport.width - 2;
       for (const fraction of [0.3, 0.5, 0.7]) {
-        const hit = document.elementsFromPoint(x, viewport.height * fraction).find((el) => el !== hostElement);
+        const hit = document.elementsFromPoint(x, viewport.height * fraction).find(
+        (el) => el !== hostElement && el !== usageHostElement
+      );
         for (let node = hit; node && node !== document.body && node !== document.documentElement; node = node.parentElement) {
           const rect = node.getBoundingClientRect();
           const againstEdge = side === 'left' ? rect.left <= 1 : rect.right >= viewport.width - 1;
@@ -248,17 +287,47 @@
     return { left, right };
   }
 
-  // Moves the pill away from the corner, straight down (or up for the bottom
-  // corners), past anything in the way, so it never spreads sideways into the
-  // conversation. Stops at the middle of the screen.
-  function stackBelowObstacles(start, size, viewport, upwards) {
-    let y = start.y;
-    // Pad vertically so the pill keeps a gap from neighbours even when their
-    // size can't be measured.
+  // Moves past chrome sideways (toward the middle of the main area) when there
+  // is room and that spot does not sit on scrolling chat text. Returns null if
+  // a content hit forces a vertical stack, or if there is no free side spot.
+  function placeBesideObstacles(start, size, viewport, area, fromRight, excludeEl) {
+    let x = start.x;
+    const y = start.y;
     const pad = OBSTACLE_GAP - 1;
 
     for (let step = 0; step < MAX_PLACEMENT_STEPS; step++) {
-      const hit = findObstacle(start.x, y - pad, size.width, size.height + pad * 2, viewport);
+      const hit = findObstacle(x - pad, y, size.width + pad * 2, size.height, viewport, excludeEl);
+      if (!hit) return { x, y };
+
+      // Words in the conversation: do not sit beside them; stack under instead.
+      if (hit.content) return null;
+
+      let next;
+      if (hit.rect) {
+        next = fromRight
+          ? hit.rect.left - OBSTACLE_GAP - size.width
+          : hit.rect.right + OBSTACLE_GAP;
+      }
+      if (next === undefined || (fromRight ? next >= x : next <= x)) {
+        next = fromRight ? x - OBSTACLE_GAP : x + OBSTACLE_GAP;
+      }
+      x = next;
+
+      const minX = area.left + EDGE_PADDING;
+      const maxX = area.right - EDGE_PADDING - size.width;
+      if (x < minX || x > maxX) return null;
+    }
+    return null;
+  }
+
+  // Fall back: move straight down (or up for bottom corners) past anything in
+  // the way. Stops at the middle of the screen.
+  function stackBelowObstacles(start, size, viewport, upwards, excludeEl) {
+    let y = start.y;
+    const pad = OBSTACLE_GAP - 1;
+
+    for (let step = 0; step < MAX_PLACEMENT_STEPS; step++) {
+      const hit = findObstacle(start.x, y - pad, size.width, size.height + pad * 2, viewport, excludeEl);
       if (!hit) return { x: start.x, y };
 
       let next;
@@ -276,21 +345,36 @@
     return null;
   }
 
-  function computePillPosition(viewport, area) {
-    const size = { width: pillElement.offsetWidth, height: pillElement.offsetHeight };
-    const right = settings.corner.endsWith('right');
-    const bottom = settings.corner.startsWith('bottom');
+  // Prefer sitting beside chrome when that does not cover chat text; otherwise
+  // stack under the obstacle as before.
+  function placeAvoidingObstacles(start, size, viewport, area, fromRight, upwards, excludeEl) {
+    return placeBesideObstacles(start, size, viewport, area, fromRight, excludeEl)
+      || stackBelowObstacles(start, size, viewport, upwards, excludeEl)
+      || start;
+  }
+
+  function computeFloatingPosition(cornerName, size, viewport, area, excludeEl) {
+    const right = cornerName.endsWith('right');
+    const bottom = cornerName.startsWith('bottom');
     const y = Math.max(0, bottom ? viewport.height - EDGE_PADDING - size.height : EDGE_PADDING);
 
     if (!settings.avoidOverlap) {
-      return { x: Math.max(0, right ? viewport.width - EDGE_PADDING - size.width : EDGE_PADDING), y };
+      return {
+        x: Math.max(0, right ? viewport.width - EDGE_PADDING - size.width : EDGE_PADDING),
+        y
+      };
     }
 
     const corner = {
       x: Math.max(area.left, right ? area.right - EDGE_PADDING - size.width : area.left + EDGE_PADDING),
       y
     };
-    return stackBelowObstacles(corner, size, viewport, bottom) || corner;
+    return placeAvoidingObstacles(corner, size, viewport, area, right, bottom, excludeEl);
+  }
+
+  function computePillPosition(viewport, area) {
+    const size = { width: pillElement.offsetWidth, height: pillElement.offsetHeight };
+    return computeFloatingPosition(settings.corner, size, viewport, area, hostElement);
   }
 
   // Keeps the settings menu on screen and out of side panels, opening it
@@ -318,18 +402,20 @@
 
   function placePill() {
     placementScheduled = false;
-    if (!pillElement || menuOpen) return;
+    if (pillElement && !menuOpen) {
+      pillElement.classList.remove('pos-top-left', 'pos-top-right', 'pos-bottom-left', 'pos-bottom-right');
+      pillElement.classList.add(`pos-${settings.corner}`);
 
-    pillElement.classList.remove('pos-top-left', 'pos-top-right', 'pos-bottom-left', 'pos-bottom-right');
-    pillElement.classList.add(`pos-${settings.corner}`);
-
-    const viewport = viewportSize();
-    const area = findMainArea(viewport);
-    const { x, y } = computePillPosition(viewport, area);
-    pillElement.style.left = `${Math.round(x)}px`;
-    pillElement.style.top = `${Math.round(y)}px`;
-    fitMenu(x, y, viewport, area);
-    pillElement.classList.add('placed');
+      const viewport = viewportSize();
+      const area = findMainArea(viewport);
+      const { x, y } = computePillPosition(viewport, area);
+      pillElement.style.left = `${Math.round(x)}px`;
+      pillElement.style.top = `${Math.round(y)}px`;
+      fitMenu(x, y, viewport, area);
+      pillElement.classList.add('placed');
+    }
+    placeUsageStack();
+    placeContextLabel();
   }
 
   function schedulePlacement() {
@@ -820,14 +906,19 @@
     const reviewUrl = `https://chromewebstore.google.com/detail/${chrome.runtime.id}/reviews`;
     const delayUnit = DELAY_UNITS[settings.hideDelayUnit] ? settings.hideDelayUnit : 'ms';
     const pillStyle = PILL_STYLES.includes(settings.pillStyle) ? settings.pillStyle : 'label';
+    const usageCorner = CORNERS.includes(settings.usageCorner) ? settings.usageCorner : 'top-right';
     return `
       <div class="pill-container pos-${settings.corner} style-${pillStyle}">
-        <button class="pill-button" aria-label="Hide Chat Bar settings" title="Hide Chat Bar settings" aria-haspopup="true" aria-expanded="false" aria-controls="chatbar-settings">
+        <button class="pill-button" aria-label="Better Gemini settings" title="Better Gemini settings" aria-haspopup="true" aria-expanded="false" aria-controls="better-gemini-settings">
           ${PILL_ICON_SVG}
-          <span class="pill-label">Chat Bar</span>
+          <span class="pill-label">Better Gemini</span>
         </button>
-        <div class="menu" id="chatbar-settings">
-          <div class="menu-header">Settings</div>
+        <div class="menu" id="better-gemini-settings">
+          <div class="menu-header">Features</div>
+          ${toggleRowHTML('showUsage', 'Usage tracker', 'Current and weekly limits from Gemini')}
+          ${toggleRowHTML('showContext', 'Context window', 'Tokens used in this chat, under the bar')}
+          <div class="divider"></div>
+          <div class="menu-header">Chat bar</div>
           <span class="menu-item-label choice-label" id="reveal-label">Show the chat bar on</span>
           <div class="choice-grid reveal-selector" role="group" aria-labelledby="reveal-label">
             ${choiceButtonHTML('reveal', 'hover', 'Hover', revealMode())}
@@ -858,14 +949,21 @@
             </div>
           </div>
           <div class="divider"></div>
-          <div class="menu-header">Position</div>
+          <div class="menu-header">Settings button</div>
           <div class="choice-grid corner-selector">
             ${choiceButtonHTML('corner', 'top-left', '↖ Top Left', settings.corner)}
             ${choiceButtonHTML('corner', 'top-right', '↗ Top Right', settings.corner)}
             ${choiceButtonHTML('corner', 'bottom-left', '↙ Bottom Left', settings.corner)}
             ${choiceButtonHTML('corner', 'bottom-right', '↘ Bottom Right', settings.corner)}
           </div>
-          ${toggleRowHTML('avoidOverlap', 'Make room for other items', 'Turn off to always sit in the exact corner')}
+          <div class="menu-header">Usage position</div>
+          <div class="choice-grid usage-corner-selector">
+            ${choiceButtonHTML('usage-corner', 'top-left', '↖ Top Left', usageCorner)}
+            ${choiceButtonHTML('usage-corner', 'top-right', '↗ Top Right', usageCorner)}
+            ${choiceButtonHTML('usage-corner', 'bottom-left', '↙ Bottom Left', usageCorner)}
+            ${choiceButtonHTML('usage-corner', 'bottom-right', '↘ Bottom Right', usageCorner)}
+          </div>
+          ${toggleRowHTML('avoidOverlap', 'Make room for other items', 'Sit beside chrome when there is room; under content if needed')}
           <div class="divider"></div>
           <div class="menu-header">Button style</div>
           <div class="choice-grid style-selector">
@@ -896,6 +994,9 @@
     if (!shadowRoot) return;
     shadowRoot.querySelectorAll('[data-corner]').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.corner === settings.corner);
+    });
+    shadowRoot.querySelectorAll('[data-usage-corner]').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.usageCorner === settings.usageCorner);
     });
     shadowRoot.querySelectorAll('[data-style]').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.style === settings.pillStyle);
@@ -942,7 +1043,7 @@
       syncDelayUI();
       if (key === 'hideDelayEnabled') placePillNow();
     }
-    if (key === 'corner') {
+    if (key === 'corner' || key === 'usageCorner') {
       syncChoiceUI();
       placePillNow();
     }
@@ -956,7 +1057,17 @@
       syncChoiceUI();
     }
     if (key === 'avoidOverlap') placePillNow();
-    if (TOGGLE_KEYS.includes(key)) syncToggleUI();
+    if (key === 'showUsage') {
+      syncToggleUI();
+      updateUsageVisibility();
+      placePillNow();
+    }
+    if (key === 'showContext') {
+      syncToggleUI();
+      updateContextVisibility();
+      placePillNow();
+    }
+    if (TOGGLE_KEYS.includes(key) && key !== 'showUsage' && key !== 'showContext') syncToggleUI();
   }
 
   // Repositions even while the menu is open, for changes made from the menu.
@@ -1091,6 +1202,13 @@
       btn.addEventListener('click', () => {
         saveSettings({ corner: btn.dataset.corner });
         applySetting('corner');
+      });
+    });
+
+    shadowRoot.querySelectorAll('[data-usage-corner]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        saveSettings({ usageCorner: btn.dataset.usageCorner });
+        applySetting('usageCorner');
       });
     });
 
@@ -1899,14 +2017,394 @@
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // Usage tracker (Current + Weekly from Gemini's own limits RPC)
+  // ---------------------------------------------------------------------------
+
+  function levelClass(percent) {
+    if (percent >= DANGER_AT * 100) return 'level-danger';
+    if (percent >= WARN_AT * 100) return 'level-warn';
+    return 'level-ok';
+  }
+
+  function formatReset(epochSec) {
+    if (!epochSec) return '';
+    try {
+      const d = new Date(epochSec * 1000);
+      const n = new Date();
+      const sameDay = d.toDateString() === n.toDateString();
+      return sameDay
+        ? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+        : d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function getUsageStyles() {
+    return `
+      :host { all: initial; font-family: 'Google Sans', Roboto, Arial, sans-serif; }
+      * { box-sizing: border-box; }
+      .usage-stack {
+        --pill-bg: #e9eef6;
+        --on-surface: #1f1f1f;
+        --on-surface-variant: #444746;
+        --ok: #0b57d0;
+        --warn: #b06000;
+        --danger: #b3261e;
+        --shadow-soft: rgba(0, 0, 0, 0.08);
+        position: fixed;
+        z-index: 999998;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        visibility: hidden;
+        color-scheme: light;
+      }
+      .usage-stack.theme-dark {
+        --pill-bg: #282a2c;
+        --on-surface: #e3e3e3;
+        --on-surface-variant: #c4c7c5;
+        --ok: #a8c7fa;
+        --warn: #fdd663;
+        --danger: #f2b8b5;
+        --shadow-soft: rgba(0, 0, 0, 0.3);
+        color-scheme: dark;
+      }
+      .usage-stack.placed { visibility: visible; }
+      .usage-stack[hidden] { display: none; }
+      .usage-pill {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 118px;
+        height: 32px;
+        padding: 0 12px;
+        border-radius: 9999px;
+        background: var(--pill-bg);
+        color: var(--on-surface);
+        box-shadow: 0 1px 2px var(--shadow-soft), 0 2px 6px var(--shadow-soft);
+        font-size: 12px;
+        font-weight: 500;
+        cursor: pointer;
+        user-select: none;
+        border: 1px solid transparent;
+        transition: border-color 0.2s ease, color 0.2s ease;
+      }
+      .usage-pill.level-ok { border-color: transparent; color: var(--on-surface); }
+      .usage-pill.level-warn { border-color: color-mix(in srgb, var(--warn) 55%, transparent); color: var(--warn); }
+      .usage-pill.level-danger { border-color: color-mix(in srgb, var(--danger) 60%, transparent); color: var(--danger); }
+      .usage-pill:hover { filter: brightness(0.97); }
+      .usage-label { color: var(--on-surface-variant); font-weight: 500; }
+      .usage-pill.level-warn .usage-label,
+      .usage-pill.level-danger .usage-label { color: inherit; }
+      .usage-pct { margin-left: auto; font-variant-numeric: tabular-nums; }
+      .usage-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--ok);
+        flex-shrink: 0;
+      }
+      .usage-pill.level-warn .usage-dot { background: var(--warn); }
+      .usage-pill.level-danger .usage-dot { background: var(--danger); }
+    `;
+  }
+
+  function createUsageStack() {
+    if (document.getElementById('better-gemini-usage-host')) return;
+
+    usageHostElement = document.createElement('div');
+    usageHostElement.id = 'better-gemini-usage-host';
+    usageShadowRoot = usageHostElement.attachShadow({ mode: 'closed' });
+
+    const style = document.createElement('style');
+    style.textContent = getUsageStyles();
+    usageShadowRoot.appendChild(style);
+
+    usageStackElement = document.createElement('div');
+    usageStackElement.className = 'usage-stack';
+    usageStackElement.innerHTML = `
+      <button type="button" class="usage-pill" data-kind="current" title="Opens Gemini usage limits" aria-label="Current usage">
+        <span class="usage-dot"></span>
+        <span class="usage-label">Current</span>
+        <span class="usage-pct">—</span>
+      </button>
+      <button type="button" class="usage-pill" data-kind="weekly" title="Opens Gemini usage limits" aria-label="Weekly usage">
+        <span class="usage-dot"></span>
+        <span class="usage-label">Weekly</span>
+        <span class="usage-pct">—</span>
+      </button>
+    `;
+    usageShadowRoot.appendChild(usageStackElement);
+
+    usageStackElement.querySelectorAll('.usage-pill').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const match = location.pathname.match(/^\/u\/(\d+)/);
+        location.href = match ? `/u/${match[1]}/usage` : '/usage';
+      });
+    });
+
+    document.body.appendChild(usageHostElement);
+    applyUsageTheme();
+    updateUsageVisibility();
+    renderUsagePills();
+  }
+
+  function applyUsageTheme() {
+    if (usageStackElement) usageStackElement.classList.toggle('theme-dark', isGeminiDark());
+  }
+
+  function updateUsageVisibility() {
+    if (!usageStackElement) return;
+    usageStackElement.hidden = !settings.showUsage;
+  }
+
+  function renderUsagePills() {
+    if (!usageShadowRoot) return;
+    for (const kind of ['current', 'weekly']) {
+      const btn = usageShadowRoot.querySelector(`[data-kind="${kind}"]`);
+      if (!btn) continue;
+      const metric = usageState[kind];
+      const pctEl = btn.querySelector('.usage-pct');
+      if (!metric) {
+        pctEl.textContent = '—';
+        btn.className = 'usage-pill level-ok';
+        btn.title = 'Usage data not available yet. Click to open Gemini usage limits.';
+        continue;
+      }
+      pctEl.textContent = `${metric.percent}%`;
+      btn.className = `usage-pill ${levelClass(metric.percent)}`;
+      const reset = formatReset(metric.resetEpoch);
+      btn.title = reset
+        ? `${kind === 'current' ? 'Current' : 'Weekly'} usage · resets ${reset}. Click for details.`
+        : `${kind === 'current' ? 'Current' : 'Weekly'} usage. Click for details.`;
+    }
+    schedulePlacement();
+  }
+
+  function placeUsageStack() {
+    if (!usageStackElement || !settings.showUsage) return;
+    const corner = CORNERS.includes(settings.usageCorner) ? settings.usageCorner : 'top-right';
+    const viewport = viewportSize();
+    const area = findMainArea(viewport);
+    const size = { width: usageStackElement.offsetWidth, height: usageStackElement.offsetHeight };
+    const { x, y } = computeFloatingPosition(corner, size, viewport, area, usageHostElement);
+    usageStackElement.style.left = `${Math.round(x)}px`;
+    usageStackElement.style.top = `${Math.round(y)}px`;
+    usageStackElement.classList.add('placed');
+    applyUsageTheme();
+  }
+
+  function bridgePost(type, extra = {}) {
+    window.postMessage({ source: BRIDGE_CMD, type, ...extra }, window.location.origin);
+  }
+
+  function requestUsageFetch() {
+    if (!settings.showUsage) return;
+    const id = ++usageFetchId;
+    bridgePost('fetch-usage', { id });
+  }
+
+  function watchBridge() {
+    window.addEventListener('message', (event) => {
+      if (event.source !== window || !event.data || event.data.source !== BRIDGE_SRC) return;
+      const { type, payload } = event.data;
+
+      if (type === 'ready') {
+        bridgeReady = true;
+        requestUsageFetch();
+        return;
+      }
+
+      if (type === 'usage' && payload) {
+        if (payload.id && payload.id !== usageFetchId) return;
+        if (!payload.ok || !payload.usage) return;
+        const { current, weekly } = payload.usage;
+        usageState = {
+          current: current ? { percent: current.percent, resetEpoch: current.resetEpoch } : usageState.current,
+          weekly: weekly ? { percent: weekly.percent, resetEpoch: weekly.resetEpoch } : usageState.weekly,
+          updatedAt: Date.now()
+        };
+        chrome.storage.local.set({ betterGeminiUsage: usageState });
+        renderUsagePills();
+        return;
+      }
+
+      if (type === 'usageMetadata' && payload) {
+        const used = Number(payload.promptTokenCount) || Number(payload.totalTokenCount) || 0;
+        if (used > 0) {
+          setContextTokens(used, false);
+          // A completed model response is when Gemini's own usage counters move.
+          if (settings.showUsage) setTimeout(() => requestUsageFetch(), 2500);
+        }
+      }
+    });
+
+    bridgePost('ping');
+    setInterval(() => {
+      if (document.hidden || !settings.showUsage) return;
+      requestUsageFetch();
+    }, 120000);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && settings.showUsage) requestUsageFetch();
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Context window (under the chat bar)
+  // ---------------------------------------------------------------------------
+
+  function detectContextLimit() {
+    const sample = (document.body && document.body.innerText || '').slice(0, 8000);
+    if (/Google AI Ultra|\bAI Ultra\b/i.test(sample)) return 1000000;
+    if (/Google AI Pro|\bAI Pro\b/i.test(sample) && !/Upgrade to Google AI Pro/i.test(sample)) return 1000000;
+    if (/Google AI Plus|\bAI Plus\b/i.test(sample) && !/Upgrade to Google AI Plus/i.test(sample)) return 128000;
+    return contextState.limit || 32000;
+  }
+
+  function resolveContextLimit(used) {
+    let limit = detectContextLimit();
+    if (!CONTEXT_TIERS.includes(limit)) {
+      limit = CONTEXT_TIERS.find((t) => t >= used) || CONTEXT_TIERS[0];
+    }
+    // If counts already exceed the detected plan cap, step up so the label stays honest.
+    while (used > limit) {
+      const idx = CONTEXT_TIERS.indexOf(limit);
+      if (idx < 0 || idx >= CONTEXT_TIERS.length - 1) break;
+      limit = CONTEXT_TIERS[idx + 1];
+    }
+    return limit;
+  }
+
+  function formatTokens(n) {
+    if (n >= 1000000) return `${(n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1)}M`;
+    if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
+    return String(Math.round(n));
+  }
+
+  function estimateTokensFromDom() {
+    const root = document.querySelector('chat-window, .chat-history, [data-test-id="chat-history"]') || document.body;
+    const text = (root && root.innerText) || '';
+    // Rough local estimate until Gemini returns an exact usageMetadata count.
+    return Math.max(0, Math.ceil(text.length / 4));
+  }
+
+  function setContextTokens(tokens, estimated) {
+    contextState.tokens = Math.max(0, Math.round(tokens));
+    contextState.estimated = estimated;
+    contextState.limit = resolveContextLimit(contextState.tokens);
+    renderContextLabel();
+  }
+
+  function createContextLabel() {
+    if (document.getElementById('better-gemini-context')) return;
+    contextElement = document.createElement('div');
+    contextElement.id = 'better-gemini-context';
+    contextElement.className = 'better-gemini-context';
+    contextElement.setAttribute('aria-live', 'polite');
+    document.body.appendChild(contextElement);
+    updateContextVisibility();
+    renderContextLabel();
+  }
+
+  function updateContextVisibility() {
+    if (!contextElement) return;
+    contextElement.hidden = !settings.showContext;
+  }
+
+  function renderContextLabel() {
+    if (!contextElement) return;
+    const { tokens, limit, estimated } = contextState;
+    const ratio = limit > 0 ? tokens / limit : 0;
+    contextElement.classList.remove('level-ok', 'level-warn', 'level-danger');
+    contextElement.classList.add(
+      ratio >= DANGER_AT ? 'level-danger' : ratio >= WARN_AT ? 'level-warn' : 'level-ok'
+    );
+    const approx = estimated ? '~' : '';
+    contextElement.innerHTML =
+      `<span class="bg-mark" title="Added by Better Gemini">Better Gemini</span>` +
+      `<span class="bg-sep">·</span>` +
+      `<span class="bg-text">${approx}${formatTokens(tokens)} / ${formatTokens(limit)} context</span>`;
+    placeContextLabel();
+  }
+
+  function placeContextLabel() {
+    if (!contextElement || !settings.showContext) return;
+    if (!barElement || !barElement.isConnected) {
+      contextElement.classList.remove('placed');
+      return;
+    }
+    const rect = barElement.getBoundingClientRect();
+    if (rect.width < 40 || rect.height < 10) {
+      contextElement.classList.remove('placed');
+      return;
+    }
+    // Sit just under the composer, matching the disclaimer strip's rhythm.
+    const top = rect.bottom + (barIsDocked() && !barCoversNaturally() ? 4 : 6);
+    contextElement.style.left = `${Math.round(rect.left + rect.width / 2)}px`;
+    contextElement.style.top = `${Math.round(top)}px`;
+    contextElement.style.maxWidth = `${Math.round(rect.width)}px`;
+    contextElement.classList.add('placed');
+  }
+
+  function conversationKey() {
+    const match = location.pathname.match(/\/(?:app|c)\/([^/?#]+)/);
+    return match ? match[1] : location.pathname;
+  }
+
+  function watchContext() {
+    let lastKey = conversationKey();
+    let estimateTimer = null;
+
+    const refreshEstimate = () => {
+      if (!settings.showContext) return;
+      if (!contextState.estimated && contextState.tokens > 0) return;
+      setContextTokens(estimateTokensFromDom(), true);
+    };
+
+    setInterval(() => {
+      const key = conversationKey();
+      if (key !== lastKey) {
+        lastKey = key;
+        contextState = { tokens: 0, limit: detectContextLimit(), estimated: true };
+        refreshEstimate();
+      }
+      placeContextLabel();
+    }, 1000);
+
+    new MutationObserver(() => {
+      if (estimateTimer) clearTimeout(estimateTimer);
+      estimateTimer = setTimeout(refreshEstimate, 500);
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+
+    refreshEstimate();
+  }
+
   async function init() {
     await loadSettings();
+    chrome.storage.local.get(['betterGeminiUsage'], (result) => {
+      if (result && result.betterGeminiUsage) {
+        usageState = { ...usageState, ...result.betterGeminiUsage };
+        renderUsagePills();
+      }
+    });
     applyHideState();
     createPill();
+    createUsageStack();
+    createContextLabel();
+    watchBridge();
+    watchContext();
     watchInputContent();
     watchTyping();
     watchBarClicks();
     watchHoverReveal();
+
+    const themeWatcher = new MutationObserver(() => {
+      applyPillTheme();
+      applyUsageTheme();
+    });
+    themeWatcher.observe(document.body, { attributes: true, attributeFilter: ['class'] });
   }
 
   if (document.readyState === 'loading') {
@@ -1915,3 +2413,4 @@
     init();
   }
 })();
+

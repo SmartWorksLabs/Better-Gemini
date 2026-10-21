@@ -72,3 +72,66 @@
 .hide-chatbar-active.hide-chatbar-docked:not(.hide-chatbar-measuring).has-content .hide-chatbar-bar::before {
   content: none;
 }
+
+/* Context window line — matches Gemini's disclaimer size/color, with a quiet
+   "Better Gemini" mark so it is clear this is not a native Gemini label. */
+.better-gemini-context {
+  position: fixed;
+  z-index: 999990;
+  transform: translateX(-50%);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 8px;
+  pointer-events: none;
+  font-family: 'Google Sans', Roboto, Arial, sans-serif;
+  font-size: 12px;
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+  color: #5f6368;
+  text-align: center;
+  white-space: nowrap;
+  max-width: min(100vw - 24px, 720px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+body.dark-theme .better-gemini-context,
+.better-gemini-context.theme-dark {
+  color: #9aa0a6;
+}
+
+.better-gemini-context.placed:not([hidden]) {
+  display: flex;
+}
+
+.better-gemini-context .bg-mark {
+  font-weight: 500;
+  opacity: 0.72;
+  pointer-events: auto;
+}
+
+.better-gemini-context .bg-sep {
+  opacity: 0.45;
+}
+
+.better-gemini-context .bg-text {
+  font-variant-numeric: tabular-nums;
+}
+
+.better-gemini-context.level-warn {
+  color: #b06000;
+}
+
+.better-gemini-context.level-danger {
+  color: #b3261e;
+}
+
+body.dark-theme .better-gemini-context.level-warn {
+  color: #fdd663;
+}
+
+body.dark-theme .better-gemini-context.level-danger {
+  color: #f2b8b5;
+}

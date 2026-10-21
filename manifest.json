@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Hide Chat Bar for Gemini",
-  "version": "1.0.4",
-  "description": "Hides the Gemini chat bar until you hover, click, or type. Not affiliated with Google.",
+  "name": "Better Gemini",
+  "version": "1.1.0",
+  "description": "Customize Gemini: hide the chat bar, track usage limits, and see context window use. Not affiliated with Google.",
   "homepage_url": "https://github.com/SmartWorksLabs/Hide-Chat-Bar-for-Gemini",
   "permissions": ["storage"],
   "background": {
@@ -11,13 +11,19 @@
   "content_scripts": [
     {
       "matches": ["*://gemini.google.com/*"],
+      "js": ["bridge.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["*://gemini.google.com/*"],
       "js": ["content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     }
   ],
   "action": {
-    "default_title": "Hide Chat Bar for Gemini",
+    "default_title": "Better Gemini",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",

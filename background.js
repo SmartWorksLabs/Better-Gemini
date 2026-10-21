@@ -2,6 +2,7 @@ chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') {
     chrome.storage.sync.set({
       corner: 'top-left',
+      usageCorner: 'top-right',
       hiddenOpacity: 0,
       revealMode: 'hover',
       typeToChat: true,
@@ -10,6 +11,8 @@ chrome.runtime.onInstalled.addListener((details) => {
       hideDelayMs: 500,
       hideDelayUnit: 'ms',
       pillStyle: 'label',
+      showUsage: true,
+      showContext: true,
       firstInstalledDate: Date.now()
     });
   }
