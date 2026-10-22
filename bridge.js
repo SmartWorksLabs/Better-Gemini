@@ -134,15 +134,14 @@
         }
         const decoder = new TextDecoder();
         let text = '';
-        let lastMeta = null;
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
           text += decoder.decode(value, { stream: true });
-          const meta = extractMetaFromText(text);
-          if (meta) lastMeta = meta;
         }
-        if (lastMeta) emitUsageMetadata(lastMeta);
+        // Parse once when the stream has finished, not on every chunk.
+        const meta = extractMetaFromText(text);
+        if (meta) emitUsageMetadata(meta);
         return text;
       }
       const text = await clone.text();
@@ -164,12 +163,13 @@
     }
   }
 
+  // Gemini's own chat endpoints (relative or absolute). Everything else is left alone.
+  const INSPECT_RE = /BardChatUi|batchexecute|StreamGenerate|GenerateContent/i;
+
   function shouldInspect(url) {
     const u = String(url || '');
-    // Relative same-origin calls (common for batchexecute) have no host.
     if (!u || u.startsWith('blob:') || u.startsWith('data:')) return false;
-    if (u.startsWith('/') || !/^https?:/i.test(u)) return true;
-    return /gemini\.google\.com|BatchExecute|batchexecute|GenerateContent|StreamGenerate|BardChatUi/i.test(u);
+    return INSPECT_RE.test(u);
   }
 
   // ---- Parallel timelines (Option A): tip rewrite in the same chat ----
@@ -216,6 +216,32 @@
     if (!tip || !tip.responseId) return;
     lastServerTip = tip;
     post('timelineTip', tip);
+  }
+
+  // Every (response id, choice id) pair in a response, in order. A chat read lists all
+  // turns; a stream lists the one being generated. The first choice follows its response.
+  function extractIdPairs(text) {
+    if (!text || typeof text !== 'string' || text.indexOf('r_') < 0) return [];
+    const cid = conversationIdFromPath();
+    const re = /\b(rc?)_([0-9a-f]{8,})\b/g;
+    const pairs = [];
+    let current = null;
+    let m;
+    while ((m = re.exec(text))) {
+      if (m[1] === 'r') {
+        current = { conversationId: cid, responseId: `r_${m[2]}`, choiceId: null };
+        pairs.push(current);
+      } else if (current && !current.choiceId) {
+        current.choiceId = `rc_${m[2]}`;
+      }
+    }
+    const seen = new Set();
+    return pairs.filter((p) => (seen.has(p.responseId) ? false : seen.add(p.responseId)));
+  }
+
+  function noteTurnTips(text) {
+    const tips = extractIdPairs(text);
+    if (tips.length) post('timelineTips', { tips });
   }
 
   function unwrapFreq(bodyText) {
@@ -421,6 +447,7 @@
           if (!text) return;
           const tip = extractIdsFromText(text);
           if (tip) noteServerTip(tip);
+          noteTurnTips(text);
         }).catch(() => {});
       }
     }).catch(() => {});
@@ -454,6 +481,7 @@
         if (found) emitUsageMetadata(found);
         const tip = extractIdsFromText(this.responseText);
         if (tip) noteServerTip(tip);
+        noteTurnTips(this.responseText);
       } catch (_) { /* ignore */ }
     });
     return xhrSend.apply(this, args);

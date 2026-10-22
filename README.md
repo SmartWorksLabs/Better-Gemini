@@ -11,7 +11,7 @@ Clicking the toolbar icon explains this and offers a link to Gemini. It does not
 - **Smart reveal**: Hover or click modes, optional hide delay, drafts stay open, type-anywhere to chat
 - **Usage tracker**: Two small pills show **Current** and **Weekly** usage from the same numbers as Gemini → Settings → Usage limits. Color shifts toward warning/danger as you near the limit. Click a pill to open Gemini’s usage page
 - **Context window**: A quiet line under the chat bar (disclaimer-sized type) shows tokens used vs the plan limit, marked **Better Gemini** so it is clear it is not a native Gemini label. Color shifts as the window fills
-- **Message versions**: When you edit an earlier prompt, keep the old path and switch with `< n / m >` in the same chat. Continuing on a version rewrites the next send so Gemini parents off that tip (going forward only; stored locally on your device)
+- **Message versions**: When you edit an earlier prompt, keep the old path and switch with `< n / m >` in the same chat. Gemini’s own messages are never modified: each finished turn is saved as it appeared (tables, code and all), and another version is shown as a read-only copy beside the live one. Continuing from an older version rewrites the next send so Gemini parents off that tip (going forward only; stored locally on your device). Canvas content is not available in saved versions
 - **Configurable**: Turn usage, context, and message versions on or off from the on-page menu
 - **Stays out of the way**: Floating controls prefer sitting **beside** other chrome when there is room; if that would sit on scrolling chat text, they stack under instead
 
@@ -44,7 +44,7 @@ python3 scripts/generate_icons.py
 ├── popup.html         # Toolbar icon explanation
 ├── popup.css
 ├── content.js         # Chat bar, settings, usage pills, context line
-├── timelines.js       # Parallel message versions (local store + UI)
+├── timelines.js       # Parallel message versions (turn tree, saved copies, UI)
 ├── content.css        # Chat bar, context line, version controls
 ├── icons/
 │   ├── better-gemini-logo.png
@@ -54,6 +54,8 @@ python3 scripts/generate_icons.py
 │   └── better-gemini-screenshot-{1,2}.png
 ├── scripts/
 │   └── generate_icons.py
+├── test/
+│   └── versions.test.js   # Message versions against a mock of Gemini's chat markup
 ├── PRIVACY.md
 ├── LICENSE
 └── README.md
@@ -81,14 +83,25 @@ Preferences are stored in `chrome.storage.sync`:
 - `hideDelayEnabled`, `hideDelayMs`, `hideDelayUnit`, `pillStyle`
 - `showUsage`, `showContext`, `showTimelines`, `firstInstalledDate`
 
-Message-version trees are stored in `chrome.storage.local` (`betterGeminiTimelines`), keyed by Gemini chat id, and never sent to SmartWorksLabs.
+Message-version trees are stored in `chrome.storage.local` (`betterGeminiTimelines`), keyed by Gemini chat id, and never sent to SmartWorksLabs. A chat is only saved once it has more than one version of a message.
 
 A short usage snapshot may be cached in `chrome.storage.local` for faster display. See [PRIVACY.md](PRIVACY.md).
 
 ## Permissions
 
 - **storage**: Save settings (and a local usage cache)
+- **unlimitedStorage**: Message versions keep full copies of the replies for edited chats, which can exceed Chrome’s default 10 MB for extension storage
 - **Site access**: Only `gemini.google.com`
+
+## Development
+
+`test/versions.test.js` runs the message-version code against a mock of Gemini’s chat markup in Chromium (Playwright):
+
+```
+NODE_PATH="$(npm root -g)" node test/versions.test.js
+```
+
+To see what the version code is doing on the real site, run `localStorage.bgDebug = '1'` in the page console and reload; it logs each saved turn and each switch.
 
 ## Browser support
 
@@ -108,7 +121,11 @@ Customizes the Gemini web app by hiding the chat input until needed and showing 
 
 **Permission justification (`storage`)**
 
-Saves the user’s settings with chrome.storage.sync, and may cache usage percentages locally so the usage pills can appear quickly. Nothing is sent to the developer.
+Saves the user’s settings with chrome.storage.sync, may cache usage percentages locally so the usage pills can appear quickly, and keeps message versions in chrome.storage.local. Nothing is sent to the developer.
+
+**Permission justification (`unlimitedStorage`)**
+
+Message versions store a local copy of each reply (including tables and code) for chats where the user edited a prompt. Long chats can exceed the default extension storage quota. The data stays on the device.
 
 **Site access (`gemini.google.com`)**
 

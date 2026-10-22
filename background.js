@@ -24,12 +24,12 @@ chrome.runtime.onInstalled.addListener((details) => {
         chrome.storage.sync.set({ showTimelines: true });
       }
     });
-    // v1.2.10 / store v8: isolated branch ownership — wipe older timeline schemas once.
+    // store v9: turn-id version tree — wipe older timeline schemas once.
     chrome.storage.local.get(['betterGeminiTimelinesVersion'], (result) => {
       const ver = result && result.betterGeminiTimelinesVersion;
-      if (ver !== 8) {
+      if (ver !== 9) {
         chrome.storage.local.remove(['betterGeminiTimelines']);
-        chrome.storage.local.set({ betterGeminiTimelinesVersion: 8 });
+        chrome.storage.local.set({ betterGeminiTimelinesVersion: 9 });
       }
     });
   }

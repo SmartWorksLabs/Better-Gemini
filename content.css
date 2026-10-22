@@ -300,14 +300,28 @@ user-query:has(.bg-timeline-controls) [class*="user-query-bubble"] {
   box-shadow: none !important;
 }
 
-/* While viewing a version that is not the one generating, hide stop chrome only. */
-html.bg-timeline-suppress-gen button[aria-label*="Stop generating" i],
-html.bg-timeline-suppress-gen button[aria-label="Stop" i],
-html.bg-timeline-suppress-gen [data-test-id="stop-button"],
-html.bg-timeline-suppress-gen button.stop-generating-button {
-  visibility: hidden !important;
+/* A saved version is shown by hiding Gemini's live turns and inserting copies beside them. */
+[data-bg-hidden="1"] {
+  display: none !important;
+}
+
+[data-bg-run] {
+  display: contents;
+}
+
+/* Saved copies are read-only: Gemini's own buttons would do nothing in them. */
+[data-bg-clone] button:not(.bg-timeline-btn),
+[data-bg-clone] [role="button"] {
   pointer-events: none !important;
-  opacity: 0 !important;
+}
+
+.bg-canvas-placeholder {
+  margin: 8px 0;
+  padding: 12px 16px;
+  border: 1px dashed currentColor;
+  border-radius: 12px;
+  opacity: 0.6;
+  font-size: 13px;
 }
 
 body.dark-theme .bg-timeline-controls {
