@@ -561,29 +561,30 @@
     return match ? `/u/${match[1]}/usage` : '/usage';
   }
 
+  // Tag-stripped text of a chunk of HTML. Gemini enforces Trusted Types, so
+  // DOMParser/innerHTML on a string is blocked; this reads text without any HTML sink.
+  function htmlToText(html) {
+    return String(html)
+      .replace(/<(script|style|template)\b[\s\S]*?<\/\1>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;|&#160;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/\s+/g, ' ');
+  }
+
   // Google AI plan from the Usage limits page (Free 32k / Plus 128k / Pro+Ultra 1M).
   function parsePlanFromUsageHtml(html) {
     if (!html) return null;
-    try {
-      const doc = new DOMParser().parseFromString(html, 'text/html');
-      const root =
-        doc.querySelector('usage-metrics-window') ||
-        doc.querySelector('.usage-metrics-container') ||
-        doc.querySelector('.usage-metrics-header');
-      const header = (root && (root.querySelector('.usage-metrics-header') || root)) || null;
-      const headerText = ((header && header.textContent) || '').replace(/\s+/g, ' ');
+
+    // Header badge: the text right after the usage metrics header.
+    const anchor = html.search(/usage-metrics-(?:window|container|header)/i);
+    if (anchor !== -1) {
+      const headerText = htmlToText(html.slice(anchor, anchor + 2000));
       const headerMatch = headerText.match(/\b(?:GOOGLE\s+AI\s+)?(FREE|PLUS|PRO|ULTRA|ADVANCED)\b/i);
       if (headerMatch) return headerMatch[1].toUpperCase();
+    }
 
-      const body = ((doc.body && doc.body.textContent) || '').replace(/\s+/g, ' ');
-      // Avoid "Upgrade to Pro" CTAs on free accounts.
-      if (/\bULTRA\b/i.test(body) && !/Upgrade[\s\S]{0,48}Ultra/i.test(body)) return 'ULTRA';
-      if (/\bPRO\b/i.test(body) && !/Upgrade[\s\S]{0,48}Pro/i.test(body)) return 'PRO';
-      if (/\bPLUS\b/i.test(body) && !/Upgrade[\s\S]{0,48}Plus/i.test(body)) return 'PLUS';
-      if (/\bFREE\b/i.test(body) || /Without an AI plan|no AI plan/i.test(body)) return 'FREE';
-    } catch (_) { /* fall through */ }
-
-    // Raw HTML / embedded JSON (Angular may not hydrate in DOMParser).
+    // Raw HTML / embedded JSON.
     const raw = html;
     const badge = raw.match(/usage-metrics-header[\s\S]{0,400}?\b(FREE|PLUS|PRO|ULTRA)\b/i);
     if (badge) return badge[1].toUpperCase();

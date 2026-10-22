@@ -288,6 +288,7 @@ async function step(name, fn) {
 
   // ---- bridge.js: ids per turn, what gets inspected ----
   const bridgeJs = fs.readFileSync(path.join(__dirname, '..', 'bridge.js'), 'utf8');
+  let usageHtml = '';
   const bpage = await ctx.newPage();
   await bpage.route('**/*', (route) => {
     const u = route.request().url();
@@ -297,11 +298,16 @@ async function step(name, fn) {
       return route.fulfill({ status: 200, contentType: 'text/event-stream', body: chunk('a') + chunk('ab') + chunk('abc') });
     }
     if (/batchexecute/.test(u)) return route.fulfill({ status: 200, contentType: 'text/plain', body: '[["wrb.fr","hNvQHb","[[[\\"c_abc123def456\\",\\"r_1111111111aa\\"],[[\\"rc_2222222222bb\\"]]],[[\\"c_abc123def456\\",\\"r_3333333333cc\\"],[[\\"rc_4444444444dd\\"]]]]"]]' });
-    if (u.startsWith(ORIGIN)) return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><body></body>' });
+    if (/\/usage$/.test(u)) return route.fulfill({ status: 200, contentType: 'text/html', body: usageHtml });
+    if (u.startsWith(ORIGIN)) return route.fulfill({ status: 200, contentType: 'text/html', headers: { 'content-security-policy': "require-trusted-types-for 'script'" }, body: '<!doctype html><body></body>' });
     return route.abort();
   });
+  const bErrors = [];
+  bpage.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') bErrors.push(m.text()); });
+  bpage.on('pageerror', (e) => bErrors.push(e.message));
+  await bpage.addInitScript(() => { window.WIZ_global_data = { SNlM0e: 'token' }; });
+  await bpage.addInitScript({ content: bridgeJs }); // like the extension: document_start, before the page
   await bpage.goto(URL);
-  await bpage.addScriptTag({ content: bridgeJs });
   await bpage.evaluate(() => {
     window.__tips = [];
     window.addEventListener('message', (e) => { if (e.data && e.data.source === 'better-gemini-bridge' && e.data.type === 'timelineTips') window.__tips.push(e.data.payload.tips); });
@@ -325,6 +331,30 @@ async function step(name, fn) {
     await bpage.evaluate(() => { window.__tips.length = 0; return fetch('/static/app.js').then((r) => r.text()).catch(() => ''); });
     await sleep(200);
     assert.deepStrictEqual(await bpage.evaluate(() => window.__tips), []);
+  });
+
+  const planFor = async (html) => {
+    usageHtml = html;
+    return bpage.evaluate(() => new Promise((resolve) => {
+      const onMsg = (e) => { if (e.data && e.data.source === 'better-gemini-bridge' && e.data.type === 'usage') { window.removeEventListener('message', onMsg); resolve(e.data.payload); } };
+      window.addEventListener('message', onMsg);
+      window.postMessage({ source: 'better-gemini-bridge-cmd', type: 'fetch-usage', id: 'u1' }, location.origin);
+      setTimeout(() => resolve({ timeout: true }), 3000);
+    }));
+  };
+
+  await step('bridge: plan is read from the usage page under Trusted Types, without errors', async () => {
+    const cases = [
+      ['<usage-metrics-window><div class="usage-metrics-header"><span>Google AI</span> <span>Pro</span></div></usage-metrics-window>', 'PRO'],
+      ['<div class="usage-metrics-header"><b>ULTRA</b></div>', 'ULTRA'],
+      ['<script>var x={"tier":"PLUS"};</script><p>nothing here</p>', 'PLUS'],
+      ['<p>Upgrade to Pro for more</p>', null]
+    ];
+    for (const [html, want] of cases) {
+      const res = await planFor(html);
+      assert.strictEqual(res.tier || null, want, html + ' -> ' + JSON.stringify(res));
+    }
+    assert.deepStrictEqual(bErrors.filter((e) => /TrustedHTML/.test(e)), []);
   });
 
   const noise = errors.filter((e) => !/Failed to load resource|net::ERR/.test(e));
