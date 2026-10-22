@@ -41,8 +41,15 @@ window.mock = {
     const d = document.createElement('div');
     d.className = 'conversation-container message-actions-hover-boundary ng-star-inserted turn-content-visibility';
     d.id = id; d.innerHTML = turnHtml(id, text, kind, complete);
+    if (window.__tall) d.style.minHeight = '400px';
     sc().appendChild(d); return d;
   },
+  // Gemini loads older turns above the ones already shown when you scroll up
+  prepend(id, text, kind, complete = true) {
+    const d = window.mock.add(id, text, kind, complete);
+    sc().insertBefore(d, sc().firstElementChild); return d;
+  },
+  scroll(where) { const a = document.getElementById('app'); a.scrollTop = where === 'top' ? 0 : a.scrollHeight; },
   complete(id) { document.getElementById(id).querySelector('.response-footer').classList.add('complete'); },
   openEdit(id) {
     const q = document.getElementById(id).querySelector('.query-content');

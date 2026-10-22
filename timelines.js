@@ -52,9 +52,19 @@
     window.postMessage({ source: BRIDGE_CMD, type, ...extra }, window.location.origin);
   }
 
+  /** Gemini's own conversation id, when the address has one (normal chats and chats with a Gem). */
   function conversationId() {
-    const m = location.pathname.match(/\/(?:app|c)\/([0-9a-f]+)/i);
+    const p = location.pathname;
+    const m = p.match(/\/(?:app|c)\/([0-9a-f]+)/i) || p.match(/\/gem\/[^/]+\/([0-9a-f]{8,})/i);
     return m ? `c_${m[1]}` : null;
+  }
+
+  /** Key for saved versions. Falls back to the address for any other chat page; null on a blank new chat. */
+  function chatKey() {
+    const id = conversationId();
+    if (id) return id;
+    const p = location.pathname.replace(/\/+$/, '');
+    return /^(\/u\/\d+)?(\/app)?$/.test(p) ? null : `p_${p}`;
   }
 
   function extAlive() {
@@ -269,11 +279,23 @@
     for (let i = 0; i < D.length; i++) {
       const c = D[i];
       const id = c.id;
-      if (!id || !isComplete(c)) {
-        if (id) stableSince.delete(id);
+      if (!id) continue;
+      let node = thread.nodes[id];
+      // A turn first seen mid-scroll gets its real parent (or root) once that is on screen.
+      // Done even while the turn is being edited: that is when you are at the top, about to fork it.
+      if (node && !node.parentLocked) {
+        const dom = parentFromDom(D, i);
+        const cur = node.parentId;
+        if ((cur === UNKNOWN && dom !== UNKNOWN) || (cur === null && dom && dom !== UNKNOWN)) {
+          node.parentId = dom;
+          changed = true;
+          dlog('parent updated', id, dom);
+        }
+      }
+      if (!isComplete(c)) {
+        stableSince.delete(id);
         continue;
       }
-      let node = thread.nodes[id];
       if (!node) {
         if (!force) {
           if (!stableSince.has(id)) stableSince.set(id, now);
@@ -300,16 +322,6 @@
         changed = true;
         dlog('saved turn', id, 'parent', parentId, node.userText);
       } else {
-        // A turn first seen mid-scroll gets its real parent (or root) once that is on screen.
-        const dom = parentFromDom(D, i);
-        if (!node.parentLocked) {
-          const cur = node.parentId;
-          if ((cur === UNKNOWN && dom !== UNKNOWN) || (cur === null && dom && dom !== UNKNOWN)) {
-            node.parentId = dom;
-            changed = true;
-            dlog('parent updated', id, dom);
-          }
-        }
         if (!node.tip || !node.tip.choiceId) {
           const tip = tipFor(id);
           if (tip && tip.choiceId) {
@@ -505,9 +517,10 @@
   }
 
   function requestChatTips() {
-    if (!chatId || Date.now() - readChatAskedAt < 15000) return;
+    const geminiId = conversationId();
+    if (!geminiId || Date.now() - readChatAskedAt < 15000) return;
     readChatAskedAt = Date.now();
-    bridgePost('read-chat', { id: `bg-${Date.now()}`, chatId });
+    bridgePost('read-chat', { id: `bg-${Date.now()}`, chatId: geminiId });
   }
 
   // ---- version controls -------------------------------------------------------
@@ -683,7 +696,7 @@
   }
 
   async function onChatChanged() {
-    const next = conversationId();
+    const next = chatKey();
     if (next === chatId) return;
     teardown();
     chatId = next;
@@ -816,6 +829,8 @@
       },
       true
     );
+    // Scrolling to the top is what tells us a first message really is the first.
+    document.addEventListener('scroll', () => scheduleTick(), { capture: true, passive: true });
     window.addEventListener('pageshow', () => {
       // Back from the bfcache: show the live conversation again.
       view = null;

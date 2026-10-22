@@ -36,7 +36,7 @@ async function step(name, fn) {
     if (route.request().url().startsWith(ORIGIN)) return route.fulfill({ status: 200, contentType: 'text/html', body: PAGE });
     return route.abort();
   });
-  const boot = async () => { await page.goto(URL); await page.addScriptTag({ content: timelinesJs }); await sleep(300); };
+  const boot = async (url = URL) => { await page.goto(url); await page.addScriptTag({ content: timelinesJs }); await sleep(300); };
   const vis = () => page.evaluate(() => window.mock.visible());
   const ctl = () => page.evaluate(() => window.mock.controls());
   const click = (id, dir) => page.evaluate(([i, d]) => window.mock.click(i, d), [id, dir]);
@@ -284,6 +284,93 @@ async function step(name, fn) {
     assert.strictEqual(sets, 0);
     assert.ok(errors.slice(before).some((e) => /no Gemini ids saved/.test(e)), 'warned');
     errors.length = before; // expected warning, not noise
+  });
+
+  // ---- every kind of chat ----
+  const editTurn = async (oldId, newId, text) => {
+    await page.evaluate((i) => mock.openEdit(i), oldId);
+    await page.dispatchEvent('.update-button', 'pointerdown');
+    await page.evaluate(([o, n, x]) => { mock.submitEdit(o, n, x, 'plain'); }, [oldId, newId, text]);
+    await sleep(300);
+    await page.evaluate((n) => { mock.complete(n); mock.tip(n); }, newId);
+    await sleep(1400);
+  };
+
+  for (const [label, url] of [
+    ['a chat opened with a Gem (/gem/<gem>/<chat>)', `${ORIGIN}/gem/abcdef0123/f00dfeed12345678`],
+    ['a chat under another account (/u/1/app/<chat>)', `${ORIGIN}/u/1/app/f00dfeed12345678`],
+    ['a chat page with an unfamiliar address', `${ORIGIN}/notebook/some-notebook-name`]
+  ]) {
+    await step('works in ' + label, async () => {
+      await page.evaluate(() => sessionStorage.clear());
+      await boot(url);
+      await page.evaluate(() => { mock.add('g1', 'one', 'plain'); mock.add('g2', 'two', 'plain'); mock.tip('g1'); mock.tip('g2'); });
+      await sleep(1300);
+      await editTurn('g2', 'g3', 'two again');
+      assert.deepStrictEqual(await ctl(), ['g3:2 / 2:false/true']);
+      await click('g3', 'prev');
+      await sleep(300);
+      assert.deepStrictEqual(await vis(), ['g1', 'g2*']);
+    });
+  }
+
+  await step('a blank new chat is ignored until Gemini gives it an address, then works', async () => {
+    await page.evaluate(() => sessionStorage.clear());
+    await boot(`${ORIGIN}/app`);
+    await page.evaluate(() => { mock.add('n1', 'first message', 'plain'); });
+    await sleep(1300);
+    assert.deepStrictEqual(await ctl(), []);
+    await page.evaluate(() => history.pushState({}, '', '/app/f00dfeed99999999'));
+    await sleep(1500);
+    await page.evaluate(() => { mock.add('n2', 'second', 'plain'); });
+    await sleep(1300);
+    await editTurn('n2', 'n3', 'second again');
+    assert.deepStrictEqual(await ctl(), ['n3:2 / 2:false/true']);
+  });
+
+  await step('long chat scrolled to the bottom: editing a later message works', async () => {
+    await page.evaluate(() => sessionStorage.clear());
+    await page.goto(URL);
+    await page.evaluate(() => { window.__tall = true; });
+    await page.addScriptTag({ content: timelinesJs });
+    await page.evaluate(() => { ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'].forEach((i) => mock.add(i, 'turn ' + i, 'plain')); mock.scroll('bottom'); });
+    await sleep(1300);
+    await editTurn('l4', 'l7', 'turn 4 edited');
+    assert.deepStrictEqual(await ctl(), ['l7:2 / 2:false/true']);
+  });
+
+  await step('long chat: editing the very first message works once you are at the top', async () => {
+    await page.evaluate(() => sessionStorage.clear());
+    await page.goto(URL);
+    await page.evaluate(() => { window.__tall = true; });
+    await page.addScriptTag({ content: timelinesJs });
+    await page.evaluate(() => { ['f1', 'f2', 'f3', 'f4'].forEach((i) => { mock.add(i, 'turn ' + i, 'plain'); mock.tip(i); }); mock.scroll('bottom'); });
+    await sleep(1300);
+    await page.evaluate(() => mock.scroll('top'));
+    await sleep(500);
+    await editTurn('f1', 'f9', 'first edited');
+    assert.deepStrictEqual(await ctl(), ['f9:2 / 2:false/true']);
+    await click('f9', 'prev');
+    await sleep(300);
+    assert.deepStrictEqual(await vis(), ['f1*', 'f2*', 'f3*', 'f4*']);
+  });
+
+  await step('older turns that load later (scrolling up) still link up so edits make versions', async () => {
+    await page.evaluate(() => sessionStorage.clear());
+    await page.goto(URL);
+    await page.evaluate(() => { window.__tall = true; });
+    await page.addScriptTag({ content: timelinesJs });
+    // Gemini first shows only the latest turns; the chat is scrolled to the bottom
+    await page.evaluate(() => { ['p4', 'p5', 'p6'].forEach((i) => { mock.add(i, 'turn ' + i, 'plain'); mock.tip(i); }); mock.scroll('bottom'); });
+    await sleep(1300);
+    // the user scrolls up and the older turns appear above
+    await page.evaluate(() => { ['p3', 'p2', 'p1'].forEach((i) => { mock.prepend(i, 'turn ' + i, 'plain'); mock.tip(i); }); });
+    await sleep(1300);
+    await editTurn('p4', 'p9', 'turn 4 edited');
+    assert.deepStrictEqual(await ctl(), ['p9:2 / 2:false/true']);
+    await click('p9', 'prev');
+    await sleep(300);
+    assert.deepStrictEqual(await vis(), ['p1', 'p2', 'p3', 'p4*', 'p5*', 'p6*']);
   });
 
   // ---- bridge.js: ids per turn, what gets inspected ----

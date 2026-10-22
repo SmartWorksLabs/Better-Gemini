@@ -186,7 +186,8 @@
   let lastEditAt = 0;
 
   function conversationIdFromPath() {
-    const m = location.pathname.match(/\/(?:app|c)\/([0-9a-f]+)/i);
+    const p = location.pathname;
+    const m = p.match(/\/(?:app|c)\/([0-9a-f]+)/i) || p.match(/\/gem\/[^/]+\/([0-9a-f]{8,})/i);
     return m ? `c_${m[1]}` : null;
   }
 
