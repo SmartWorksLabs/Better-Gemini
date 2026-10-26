@@ -72,11 +72,11 @@ async function step(name, fn) {
     await click('e2', 'prev');
     await sleep(300);
     assert.deepStrictEqual(await vis(), ['t1', 't2*', 't3*', 't4*']);
-    const html = await page.evaluate(() => document.querySelector('[data-bg-run]').innerHTML);
+    const html = await page.evaluate(() => document.querySelector('[data-mv-run]').innerHTML);
     assert.ok(html.includes('cell-t2'), 'table content kept');
     assert.ok(html.includes('table-block'), 'table wrapper kept');
     assert.ok(html.includes('hljs-keyword'), 'code highlighting kept');
-    assert.ok(html.includes('bg-canvas-placeholder'), 'canvas replaced by a placeholder');
+    assert.ok(html.includes('mv-canvas-placeholder'), 'canvas replaced by a placeholder');
     assert.ok(!html.includes('<iframe'), 'no iframe in saved copy');
     assert.deepStrictEqual(await ctl(), ['t2:1 / 2:true/false']);
   });
@@ -93,7 +93,7 @@ async function step(name, fn) {
   await step('Gemini\'s live turn is untouched while hidden', async () => {
     const info = await page.evaluate(() => {
       const e = document.getElementById('e2');
-      return { hidden: e.getAttribute('data-bg-hidden'), reply: e.querySelector('.markdown').innerHTML };
+      return { hidden: e.getAttribute('data-mv-hidden'), reply: e.querySelector('.markdown').innerHTML };
     });
     assert.strictEqual(info.hidden, '1');
     assert.strictEqual(info.reply, '<p>reply e2</p>');
@@ -103,7 +103,7 @@ async function step(name, fn) {
     await click('t2', 'next');
     await sleep(300);
     assert.deepStrictEqual(await vis(), ['t1', 'e2']);
-    assert.strictEqual(await page.evaluate(() => document.querySelectorAll('[data-bg-run],[data-bg-hidden]').length), 0);
+    assert.strictEqual(await page.evaluate(() => document.querySelectorAll('[data-mv-run],[data-mv-hidden]').length), 0);
   });
 
   await step('continuing from the older version rewrites the tip and attaches the reply to it', async () => {
@@ -129,7 +129,7 @@ async function step(name, fn) {
     await click('t2', 'next');
     await sleep(300);
     assert.deepStrictEqual(await vis(), ['t1', 'e2']);
-    assert.strictEqual(await page.evaluate(() => document.getElementById('n5').getAttribute('data-bg-hidden')), '1');
+    assert.strictEqual(await page.evaluate(() => document.getElementById('n5').getAttribute('data-mv-hidden')), '1');
     await click('e2', 'prev');
     await sleep(300);
     assert.deepStrictEqual(await vis(), ['t1', 't2*', 't3*', 't4*', 'n5'], 'and brings it back with the older version');
@@ -226,7 +226,7 @@ async function step(name, fn) {
     assert.deepStrictEqual(await vis(), ['z1', 'z2*']);
     await page.evaluate(() => window.__onChanged({ showTimelines: { newValue: false } }, 'sync'));
     await sleep(300);
-    assert.strictEqual(await page.evaluate(() => document.querySelectorAll('[data-bg-run],[data-bg-hidden],.bg-timeline-controls').length), 0);
+    assert.strictEqual(await page.evaluate(() => document.querySelectorAll('[data-mv-run],[data-mv-hidden],.mv-controls').length), 0);
     assert.deepStrictEqual(await vis(), ['z1', 'z3']);
   });
 
@@ -241,18 +241,18 @@ async function step(name, fn) {
     await sleep(1400);
     assert.deepStrictEqual(await ctl(), ['r3:2 / 2:false/true']);
     // Gemini re-renders the user bubble: our controls are wiped
-    await page.evaluate(() => { const uq = document.querySelector('#r3 user-query'); uq.replaceWith(uq.cloneNode(true)); document.querySelector('#r3 .bg-timeline-controls')?.remove(); });
+    await page.evaluate(() => { const uq = document.querySelector('#r3 user-query'); uq.replaceWith(uq.cloneNode(true)); document.querySelector('#r3 .mv-controls')?.remove(); });
     await sleep(500);
     assert.deepStrictEqual(await ctl(), ['r3:2 / 2:false/true'], 'controls come back after a re-render');
     await click('r3', 'prev');
     await sleep(300);
     assert.deepStrictEqual(await vis(), ['r1', 'r2*']);
     // Gemini re-creates the hidden live turn: it must be hidden again
-    await page.evaluate(() => { const old = document.getElementById('r3'); const fresh = old.cloneNode(true); fresh.removeAttribute('data-bg-hidden'); old.replaceWith(fresh); });
+    await page.evaluate(() => { const old = document.getElementById('r3'); const fresh = old.cloneNode(true); fresh.removeAttribute('data-mv-hidden'); old.replaceWith(fresh); });
     await sleep(500);
     assert.deepStrictEqual(await vis(), ['r1', 'r2*']);
     // Gemini removes our wrapper outright
-    await page.evaluate(() => document.querySelector('[data-bg-run]').remove());
+    await page.evaluate(() => document.querySelector('[data-mv-run]').remove());
     await sleep(500);
     assert.deepStrictEqual(await vis(), ['r1', 'r2*'], 'saved copy is put back');
   });
@@ -375,17 +375,17 @@ async function step(name, fn) {
 
   // ---- bridge.js: ids per turn, what gets inspected ----
   const bridgeJs = fs.readFileSync(path.join(__dirname, '..', 'bridge.js'), 'utf8');
-  let usageHtml = '';
+  let lastSendBody = '';
   const bpage = await ctx.newPage();
   await bpage.route('**/*', (route) => {
     const u = route.request().url();
     if (/StreamGenerate/.test(u)) {
+      lastSendBody = route.request().postData() || '';
       // a stream of chunks that repeat the same ids, like Gemini's
       const chunk = (rc) => ')]}\'\n[["wrb.fr",null,"[[\\"c_abc123def456\\",\\"r_aaaaaaaa1111\\"],[[\\"rc_bbbbbbbb2222\\",[\\"hi' + rc + '\\"]],[\\"rc_cccccccc3333\\",[\\"draft\\"]]]]"]]\n';
       return route.fulfill({ status: 200, contentType: 'text/event-stream', body: chunk('a') + chunk('ab') + chunk('abc') });
     }
     if (/batchexecute/.test(u)) return route.fulfill({ status: 200, contentType: 'text/plain', body: '[["wrb.fr","hNvQHb","[[[\\"c_abc123def456\\",\\"r_1111111111aa\\"],[[\\"rc_2222222222bb\\"]]],[[\\"c_abc123def456\\",\\"r_3333333333cc\\"],[[\\"rc_4444444444dd\\"]]]]"]]' });
-    if (/\/usage$/.test(u)) return route.fulfill({ status: 200, contentType: 'text/html', body: usageHtml });
     if (u.startsWith(ORIGIN)) return route.fulfill({ status: 200, contentType: 'text/html', headers: { 'content-security-policy': "require-trusted-types-for 'script'" }, body: '<!doctype html><body></body>' });
     return route.abort();
   });
@@ -397,7 +397,7 @@ async function step(name, fn) {
   await bpage.goto(URL);
   await bpage.evaluate(() => {
     window.__tips = [];
-    window.addEventListener('message', (e) => { if (e.data && e.data.source === 'better-gemini-bridge' && e.data.type === 'timelineTips') window.__tips.push(e.data.payload.tips); });
+    window.addEventListener('message', (e) => { if (e.data && e.data.source === 'message-versions-bridge' && e.data.type === 'timelineTips') window.__tips.push(e.data.payload.tips); });
   });
 
   await step('bridge: a streamed reply yields its response id with the first choice', async () => {
@@ -420,29 +420,36 @@ async function step(name, fn) {
     assert.deepStrictEqual(await bpage.evaluate(() => window.__tips), []);
   });
 
-  const planFor = async (html) => {
-    usageHtml = html;
-    return bpage.evaluate(() => new Promise((resolve) => {
-      const onMsg = (e) => { if (e.data && e.data.source === 'better-gemini-bridge' && e.data.type === 'usage') { window.removeEventListener('message', onMsg); resolve(e.data.payload); } };
-      window.addEventListener('message', onMsg);
-      window.postMessage({ source: 'better-gemini-bridge-cmd', type: 'fetch-usage', id: 'u1' }, location.origin);
-      setTimeout(() => resolve({ timeout: true }), 3000);
-    }));
-  };
+  const send = (tuple, action) => bpage.evaluate(([t, a]) => {
+    const inner = [['hi'], null, t];
+    inner[72] = a;
+    const body = new URLSearchParams({ 'f.req': JSON.stringify([null, JSON.stringify(inner)]), at: 'token' }).toString();
+    return fetch('/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate', { method: 'POST', body }).then((r) => r.text());
+  }, [tuple, action]);
+  const sentTuple = () => JSON.parse(JSON.parse(new URLSearchParams(lastSendBody).get('f.req'))[1])[2];
 
-  await step('bridge: plan is read from the usage page under Trusted Types, without errors', async () => {
-    const cases = [
-      ['<usage-metrics-window><div class="usage-metrics-header"><span>Google AI</span> <span>Pro</span></div></usage-metrics-window>', 'PRO'],
-      ['<div class="usage-metrics-header"><b>ULTRA</b></div>', 'ULTRA'],
-      ['<script>var x={"tier":"PLUS"};</script><p>nothing here</p>', 'PLUS'],
-      ['<p>Upgrade to Pro for more</p>', null]
-    ];
-    for (const [html, want] of cases) {
-      const res = await planFor(html);
-      assert.strictEqual(res.tier || null, want, html + ' -> ' + JSON.stringify(res));
-    }
-    assert.deepStrictEqual(bErrors.filter((e) => /TrustedHTML/.test(e)), []);
+  await step('bridge: while an older version is shown, a send continues from it', async () => {
+    await bpage.evaluate(() => window.postMessage({ source: 'message-versions-bridge-cmd', type: 'set-tip-override', tip: { conversationId: 'c_abc123def456', responseId: 'r_0000000000aa', choiceId: 'rc_0000000000bb' } }, location.origin));
+    await sleep(100);
+    await send(['c_abc123def456', 'r_9999999999ff', 'rc_9999999999ee'], null);
+    assert.deepStrictEqual(sentTuple(), ['c_abc123def456', 'r_0000000000aa', 'rc_0000000000bb']);
   });
+
+  await step('bridge: edits and regenerates are never rewritten', async () => {
+    for (const action of [2, 5, 7]) {
+      await send(['c_abc123def456', 'r_9999999999ff', 'rc_9999999999ee'], action);
+      assert.deepStrictEqual(sentTuple(), ['c_abc123def456', 'r_9999999999ff', 'rc_9999999999ee'], 'action ' + action);
+    }
+  });
+
+  await step('bridge: back on the live version, sends are left alone', async () => {
+    await bpage.evaluate(() => window.postMessage({ source: 'message-versions-bridge-cmd', type: 'clear-tip-override' }, location.origin));
+    await sleep(100);
+    await send(['c_abc123def456', 'r_9999999999ff', 'rc_9999999999ee'], null);
+    assert.deepStrictEqual(sentTuple(), ['c_abc123def456', 'r_9999999999ff', 'rc_9999999999ee']);
+  });
+
+  await step('bridge: no script errors', async () => assert.deepStrictEqual(bErrors, []));
 
   const noise = errors.filter((e) => !/Failed to load resource|net::ERR/.test(e));
   await step('no script errors or warnings', async () => assert.deepStrictEqual(noise, []));

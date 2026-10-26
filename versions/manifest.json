@@ -1,13 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "Better Gemini",
-  "version": "1.3.0",
-  "description": "Customize Gemini: hide the chat bar, track usage limits, see context use, and keep parallel message versions. Not affiliated with Google.",
-  "homepage_url": "https://github.com/SmartWorksLabs/Better-Gemini",
+  "name": "Message Versions for Gemini",
+  "version": "1.0.0",
+  "description": "Keep every version when you edit a Gemini prompt, and switch between them with < 1 / 2 > in the same chat. Not affiliated with Google.",
+  "homepage_url": "https://github.com/SmartWorksLabs/Better-Gemini/tree/main/versions",
   "permissions": ["storage", "unlimitedStorage"],
-  "background": {
-    "service_worker": "background.js"
-  },
   "content_scripts": [
     {
       "matches": ["*://gemini.google.com/*"],
@@ -17,13 +14,13 @@
     },
     {
       "matches": ["*://gemini.google.com/*"],
-      "js": ["content.js", "timelines.js"],
+      "js": ["timelines.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     }
   ],
   "action": {
-    "default_title": "Better Gemini",
+    "default_title": "Message Versions for Gemini",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",

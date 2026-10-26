@@ -1,4 +1,4 @@
-/* Better Gemini — Claude-style parallel message versions in the same chat.
+/* Message Versions for Gemini — Claude-style parallel message versions in the same chat.
 
    Gemini's own turns are never edited. Every finished turn (Gemini's
    `.conversation-container`, keyed by its own id) is saved as a node whose parent
@@ -6,13 +6,13 @@
    Showing another version hides the live turns and inserts saved copies next to
    them; showing the live version removes the copies again.
 
-   Debug: run `localStorage.bgDebug = '1'` in the page console and reload. */
+   Debug: run `localStorage.mvDebug = '1'` in the page console and reload. */
 (function () {
   'use strict';
 
-  const BRIDGE_CMD = 'better-gemini-bridge-cmd';
-  const BRIDGE_SRC = 'better-gemini-bridge';
-  const STORE_KEY = 'betterGeminiTimelines';
+  const BRIDGE_CMD = 'message-versions-bridge-cmd';
+  const BRIDGE_SRC = 'message-versions-bridge';
+  const STORE_KEY = 'messageVersions';
   const STORE_VERSION = 9;
   const MAX_CHATS = 40;
   const UNKNOWN = '?'; // parent not known (turn was first on screen, chat not scrolled to top)
@@ -38,14 +38,14 @@
 
   function debugOn() {
     try {
-      return localStorage.getItem('bgDebug') === '1';
+      return localStorage.getItem('mvDebug') === '1';
     } catch (_) {
       return false;
     }
   }
 
   function dlog(...args) {
-    if (debugOn()) console.log('[Better Gemini]', ...args);
+    if (debugOn()) console.log('[Message Versions]', ...args);
   }
 
   function bridgePost(type, extra = {}) {
@@ -96,14 +96,14 @@
         chrome.storage.local.set({ [STORE_KEY]: all }, () => {
           const err = chrome.runtime.lastError;
           if (err) {
-            console.warn('[Better Gemini] could not save message versions:', err.message);
+            console.warn('[Message Versions] could not save message versions:', err.message);
             resolve(false);
           } else {
             resolve(true);
           }
         });
       } catch (err) {
-        console.warn('[Better Gemini] could not save message versions:', err);
+        console.warn('[Message Versions] could not save message versions:', err);
         resolve(false);
       }
     });
@@ -128,12 +128,12 @@
     );
   }
 
-  /** Gemini's own turns, in order. Our saved copies live in [data-bg-run] wrappers and never match. */
+  /** Gemini's own turns, in order. Our saved copies live in [data-mv-run] wrappers and never match. */
   function liveContainers() {
     const sc = scroller();
     if (!sc) return [];
     return Array.from(sc.children).filter(
-      (c) => c.classList && c.classList.contains('conversation-container') && !c.hasAttribute('data-bg-clone')
+      (c) => c.classList && c.classList.contains('conversation-container') && !c.hasAttribute('data-mv-clone')
     );
   }
 
@@ -187,8 +187,8 @@
 
   function serializeContainer(c) {
     const copy = c.cloneNode(true);
-    copy.removeAttribute('data-bg-hidden');
-    copy.querySelectorAll('.bg-timeline-controls, iframe, script').forEach((n) => n.remove());
+    copy.removeAttribute('data-mv-hidden');
+    copy.querySelectorAll('.mv-controls, iframe, script').forEach((n) => n.remove());
     return copy.outerHTML.replace(/<!--[\s\S]*?-->/g, '');
   }
 
@@ -201,7 +201,7 @@
     if (!root) return null;
     root.removeAttribute('id');
     root.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
-    root.querySelectorAll('script, iframe, .bg-timeline-controls').forEach((n) => n.remove());
+    root.querySelectorAll('script, iframe, .mv-controls').forEach((n) => n.remove());
     // Saved markup is only ever Gemini's own rendered page, but never let it run anything.
     [root, ...root.querySelectorAll('*')].forEach((n) => {
       Array.from(n.attributes).forEach((a) => {
@@ -212,12 +212,12 @@
     });
     root.querySelectorAll('mini-app').forEach((n) => {
       const ph = document.createElement('div');
-      ph.className = 'bg-canvas-placeholder';
+      ph.className = 'mv-canvas-placeholder';
       ph.textContent = 'Canvas is not available in saved versions.';
       n.replaceWith(ph);
     });
-    root.setAttribute('data-bg-clone', '1');
-    root.setAttribute('data-bg-node-id', node.id);
+    root.setAttribute('data-mv-clone', '1');
+    root.setAttribute('data-mv-node-id', node.id);
     return document.adoptNode(root);
   }
 
@@ -378,12 +378,12 @@
   // ---- showing a version ------------------------------------------------------
 
   function removeRuns() {
-    document.querySelectorAll('[data-bg-run]').forEach((n) => n.remove());
+    document.querySelectorAll('[data-mv-run]').forEach((n) => n.remove());
   }
 
   function clearView() {
     removeRuns();
-    document.querySelectorAll('[data-bg-hidden]').forEach((n) => n.removeAttribute('data-bg-hidden'));
+    document.querySelectorAll('[data-mv-hidden]').forEach((n) => n.removeAttribute('data-mv-hidden'));
     renderSig = '';
   }
 
@@ -402,7 +402,7 @@
 
   function applyView() {
     if (!view) {
-      if (renderSig !== '' || document.querySelector('[data-bg-run], [data-bg-hidden]')) clearView();
+      if (renderSig !== '' || document.querySelector('[data-mv-run], [data-mv-hidden]')) clearView();
       return;
     }
     const D = liveContainers();
@@ -427,9 +427,9 @@
     const liveSet = new Set(seq.filter((s) => s.live).map((s) => s.live));
     D.forEach((c) => {
       if (liveSet.has(c)) {
-        if (c.hasAttribute('data-bg-hidden')) c.removeAttribute('data-bg-hidden');
-      } else if (c.getAttribute('data-bg-hidden') !== '1') {
-        c.setAttribute('data-bg-hidden', '1');
+        if (c.hasAttribute('data-mv-hidden')) c.removeAttribute('data-mv-hidden');
+      } else if (c.getAttribute('data-mv-hidden') !== '1') {
+        c.setAttribute('data-mv-hidden', '1');
       }
     });
 
@@ -438,7 +438,7 @@
     for (let i = 0; i < seq.length; i++) {
       if (!seq[i].live && (i === 0 || seq[i - 1].live)) runs++;
     }
-    if (sig === renderSig && document.querySelectorAll('[data-bg-run]').length === runs) return;
+    if (sig === renderSig && document.querySelectorAll('[data-mv-run]').length === runs) return;
 
     removeRuns();
     for (let i = 0; i < seq.length; ) {
@@ -447,7 +447,7 @@
         continue;
       }
       const run = document.createElement('div');
-      run.setAttribute('data-bg-run', '1');
+      run.setAttribute('data-mv-run', '1');
       let j = i;
       while (j < seq.length && !seq[j].live) {
         const el = buildClone(thread.nodes[seq[j].clone]);
@@ -468,7 +468,7 @@
     try {
       applyView();
     } catch (err) {
-      console.warn('[Better Gemini] could not show that version, going back to the live one', err);
+      console.warn('[Message Versions] could not show that version, going back to the live one', err);
       view = null;
       clearView();
     }
@@ -509,7 +509,7 @@
       bridgePost('clear-tip-override', {});
       if (view) {
         console.warn(
-          '[Better Gemini] this version has no Gemini ids saved, so a new message will continue from the live conversation'
+          '[Message Versions] this version has no Gemini ids saved, so a new message will continue from the live conversation'
         );
         requestChatTips();
       }
@@ -520,7 +520,7 @@
     const geminiId = conversationId();
     if (!geminiId || Date.now() - readChatAskedAt < 15000) return;
     readChatAskedAt = Date.now();
-    bridgePost('read-chat', { id: `bg-${Date.now()}`, chatId: geminiId });
+    bridgePost('read-chat', { id: `mv-${Date.now()}`, chatId: geminiId });
   }
 
   // ---- version controls -------------------------------------------------------
@@ -542,24 +542,24 @@
 
   function makeControls(turnId) {
     const row = document.createElement('div');
-    row.className = 'bg-timeline-controls';
+    row.className = 'mv-controls';
     row.setAttribute('role', 'group');
     row.setAttribute('aria-label', 'Message versions');
     row.dataset.turnId = turnId;
 
     const prev = document.createElement('button');
     prev.type = 'button';
-    prev.className = 'bg-timeline-btn';
+    prev.className = 'mv-btn';
     prev.dataset.dir = 'prev';
     prev.setAttribute('aria-label', 'Previous version');
     prev.textContent = '‹';
 
     const label = document.createElement('span');
-    label.className = 'bg-timeline-count';
+    label.className = 'mv-count';
 
     const next = document.createElement('button');
     next.type = 'button';
-    next.className = 'bg-timeline-btn';
+    next.className = 'mv-btn';
     next.dataset.dir = 'next';
     next.setAttribute('aria-label', 'Next version');
     next.textContent = '›';
@@ -574,7 +574,7 @@
   }
 
   function removeAllControls() {
-    document.querySelectorAll('.bg-timeline-controls').forEach((n) => n.remove());
+    document.querySelectorAll('.mv-controls').forEach((n) => n.remove());
   }
 
   function ensureControls() {
@@ -587,19 +587,19 @@
     const generating = isGenerating();
     const shown = Array.from(
       sc.querySelectorAll(
-        ':scope > .conversation-container:not([data-bg-hidden]), :scope > [data-bg-run] > .conversation-container'
+        ':scope > .conversation-container:not([data-mv-hidden]), :scope > [data-mv-run] > .conversation-container'
       )
     );
     const keep = new Set();
     shown.forEach((el) => {
-      const id = el.getAttribute('data-bg-node-id') || el.id;
+      const id = el.getAttribute('data-mv-node-id') || el.id;
       const node = id && thread.nodes[id];
       if (!node || node.parentId === UNKNOWN) return;
       const sibs = idx.get(node.parentId == null ? null : node.parentId) || [];
       if (sibs.length < 2) return;
       const host = el.querySelector('user-query');
       if (!host) return;
-      let row = host.querySelector('.bg-timeline-controls');
+      let row = host.querySelector('.mv-controls');
       if (!row || row.dataset.turnId !== id) {
         if (row) row.remove();
         row = makeControls(id);
@@ -607,13 +607,13 @@
       mountControls(host, row);
       const at = sibs.findIndex((s) => s.id === id);
       const text = `${at + 1} / ${sibs.length}`;
-      const label = row.querySelector('.bg-timeline-count');
+      const label = row.querySelector('.mv-count');
       if (label.textContent !== text) label.textContent = text;
       setDisabled(row.querySelector('[data-dir="prev"]'), generating || at <= 0);
       setDisabled(row.querySelector('[data-dir="next"]'), generating || at >= sibs.length - 1);
       keep.add(row);
     });
-    document.querySelectorAll('.bg-timeline-controls').forEach((row) => {
+    document.querySelectorAll('.mv-controls').forEach((row) => {
       if (!keep.has(row)) row.remove();
     });
   }
@@ -621,7 +621,7 @@
   /** pointerdown in the capture phase: Gemini swallows plain clicks inside user-query. */
   function onControlsPointer(event) {
     if (event.button != null && event.button !== 0) return;
-    const btn = event.target && event.target.closest && event.target.closest('.bg-timeline-btn');
+    const btn = event.target && event.target.closest && event.target.closest('.mv-btn');
     if (!btn || !enabled || !thread) return;
     event.preventDefault();
     event.stopPropagation();
@@ -632,7 +632,7 @@
     const now = Date.now();
     if (event.type === 'click' && now - lastPointerAt < 700) return;
     if (event.type === 'pointerdown') lastPointerAt = now;
-    const row = btn.closest('.bg-timeline-controls');
+    const row = btn.closest('.mv-controls');
     if (!row) return;
     navigate(row.dataset.turnId, btn.dataset.dir === 'prev' ? -1 : 1);
     try {
@@ -660,7 +660,7 @@
     const ids = Object.keys(all).sort((a, b) => (all[a].updatedAt || 0) - (all[b].updatedAt || 0));
     while (ids.length > MAX_CHATS) delete all[ids.shift()];
     const ok = await storageSet(all);
-    if (!ok) console.warn('[Better Gemini] message versions are only kept until this tab closes');
+    if (!ok) console.warn('[Message Versions] message versions are only kept until this tab closes');
   }
 
   // ---- loop -------------------------------------------------------------------
@@ -680,7 +680,7 @@
       ensureControls();
       if (settling) scheduleTick(STABLE_MS / 2);
     } catch (err) {
-      console.warn('[Better Gemini] message versions', err);
+      console.warn('[Message Versions] message versions', err);
       view = null;
       clearView();
     }
@@ -727,8 +727,6 @@
       } else if (type === 'chatTurns' && payload && Array.isArray(payload.turns)) {
         payload.turns.forEach((t) => mergeTip(t));
         if (view) syncOverride();
-      } else if (type === 'timelineEdit' && payload) {
-        dlog('edit sent', payload.prompt);
       }
     });
   }
@@ -739,7 +737,7 @@
       const relevant = records.some((r) => {
         const t = r.target;
         const el = t && t.nodeType === 1 ? t : t && t.parentElement;
-        return !(el && el.closest && el.closest('[data-bg-run], .bg-timeline-controls'));
+        return !(el && el.closest && el.closest('[data-mv-run], .mv-controls'));
       });
       if (!relevant) return;
       lastMutationAt = Date.now();
@@ -793,10 +791,10 @@
     if (extAlive()) {
       await new Promise((resolve) => {
         try {
-          chrome.storage.local.get(['betterGeminiTimelinesVersion'], (result) => {
-            if (!chrome.runtime.lastError && result.betterGeminiTimelinesVersion !== STORE_VERSION) {
+          chrome.storage.local.get(['messageVersionsStoreVersion'], (result) => {
+            if (!chrome.runtime.lastError && result.messageVersionsStoreVersion !== STORE_VERSION) {
               chrome.storage.local.remove([STORE_KEY], () => {
-                chrome.storage.local.set({ betterGeminiTimelinesVersion: STORE_VERSION }, resolve);
+                chrome.storage.local.set({ messageVersionsStoreVersion: STORE_VERSION }, resolve);
               });
             } else {
               resolve();

@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Usage Tracker for Gemini</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <h1>Usage Tracker for Gemini</h1>
+  <p>Shows your usage limits and this chat's context window under Gemini's chat bar.</p>
+  <label class="switch-row">
+    <span class="switch-text">
+      <span class="switch-label">Usage limits</span>
+      <span class="switch-hint">Current and Weekly usage with reset times</span>
+    </span>
+    <input type="checkbox" data-setting="showUsage" role="switch">
+  </label>
+  <label class="switch-row">
+    <span class="switch-text">
+      <span class="switch-label">Context window</span>
+      <span class="switch-hint">Tokens used in this chat</span>
+    </span>
+    <input type="checkbox" data-setting="showContext" role="switch">
+  </label>
+  <p class="note">Not affiliated with Google.</p>
+  <a class="open" href="https://gemini.google.com/" target="_blank" rel="noopener noreferrer">Open Gemini</a>
+  <script src="popup.js"></script>
+</body>
+</html>

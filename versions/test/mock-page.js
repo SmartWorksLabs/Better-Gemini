@@ -20,7 +20,7 @@ const PAGE = `<!doctype html><html><head><style>${css}
   });
   window.chrome = { runtime: { id: 'test', lastError: null }, storage: { local: mk('local'), sync: mk('sync'), onChanged: { addListener(fn) { window.__onChanged = fn; } } } };
   window.__bridge = [];
-  window.addEventListener('message', (e) => { if (e.data && e.data.source === 'better-gemini-bridge-cmd') window.__bridge.push({ type: e.data.type, tip: e.data.tip || null }); });
+  window.addEventListener('message', (e) => { if (e.data && e.data.source === 'message-versions-bridge-cmd') window.__bridge.push({ type: e.data.type, tip: e.data.tip || null }); });
 })();
 
 // ---- mock Gemini ----
@@ -62,10 +62,10 @@ window.mock = {
     all.slice(at).forEach(c => c.remove());
     return window.mock.add(newId, text, kind, false);
   },
-  tip(id, rc) { window.postMessage({ source: 'better-gemini-bridge', type: 'timelineTips', payload: { tips: [{ conversationId: 'c_abc123def456', responseId: 'r_' + id, choiceId: 'rc_' + (rc || id) }] } }, location.origin); },
-  visible() { return Array.from(sc().querySelectorAll(':scope > .conversation-container:not([data-bg-hidden]), :scope > [data-bg-run] > .conversation-container')).map(c => (c.getAttribute('data-bg-node-id') || c.id) + (c.hasAttribute('data-bg-clone') ? '*' : '')); },
-  controls() { return Array.from(document.querySelectorAll('.bg-timeline-controls')).map(r => r.dataset.turnId + ':' + r.querySelector('.bg-timeline-count').textContent + ':' + r.querySelector('[data-dir=prev]').disabled + '/' + r.querySelector('[data-dir=next]').disabled); },
-  click(turnId, dir) { const b = document.querySelector('.bg-timeline-controls[data-turn-id="' + turnId + '"] [data-dir=' + dir + ']'); b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 })); }
+  tip(id, rc) { window.postMessage({ source: 'message-versions-bridge', type: 'timelineTips', payload: { tips: [{ conversationId: 'c_abc123def456', responseId: 'r_' + id, choiceId: 'rc_' + (rc || id) }] } }, location.origin); },
+  visible() { return Array.from(sc().querySelectorAll(':scope > .conversation-container:not([data-mv-hidden]), :scope > [data-mv-run] > .conversation-container')).map(c => (c.getAttribute('data-mv-node-id') || c.id) + (c.hasAttribute('data-mv-clone') ? '*' : '')); },
+  controls() { return Array.from(document.querySelectorAll('.mv-controls')).map(r => r.dataset.turnId + ':' + r.querySelector('.mv-count').textContent + ':' + r.querySelector('[data-dir=prev]').disabled + '/' + r.querySelector('[data-dir=next]').disabled); },
+  click(turnId, dir) { const b = document.querySelector('.mv-controls[data-turn-id="' + turnId + '"] [data-dir=' + dir + ']'); b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 })); }
 };
 </script></body></html>`;
 

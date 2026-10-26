@@ -15,21 +15,15 @@
   const SYNC_KEYS = [
     'corner', 'hiddenOpacity', 'typeToChat', 'avoidOverlap',
     'hideDelayEnabled', 'hideDelayMs', 'hideDelayUnit', 'pillStyle', 'revealMode',
-    'showUsage', 'showContext', 'showTimelines', 'firstInstalledDate'
+    'firstInstalledDate'
   ];
-  const TOGGLE_KEYS = ['typeToChat', 'avoidOverlap', 'hideDelayEnabled', 'showUsage', 'showContext', 'showTimelines'];
+  const TOGGLE_KEYS = ['typeToChat', 'avoidOverlap', 'hideDelayEnabled'];
 
   const DELAY_UNITS = { ms: 1, s: 1000, min: 60000 };
   const DELAY_SLIDER_MAX_MS = 5000;
   const DELAY_MAX_MS = 60 * 60000;
   const PILL_STYLES = ['label', 'icon'];
   const REVEAL_MODES = ['hover', 'click'];
-  const CORNERS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
-  const CONTEXT_TIERS = [32000, 128000, 1000000];
-  const WARN_AT = 0.75;
-  const DANGER_AT = 0.9;
-  const BRIDGE_CMD = 'better-gemini-bridge-cmd';
-  const BRIDGE_SRC = 'better-gemini-bridge';
 
   let settings = {
     corner: 'top-left',
@@ -41,9 +35,6 @@
     hideDelayMs: 500,
     hideDelayUnit: 'ms',
     pillStyle: 'icon',
-    showUsage: true,
-    showContext: true,
-    showTimelines: true,
     firstInstalledDate: Date.now()
   };
 
@@ -52,22 +43,6 @@
   let shadowRoot = null;
   let menuOpen = false;
   let placementScheduled = false;
-  let footerElement = null;
-  let contextElement = null;
-  let usageElement = null;
-  let usageState = { current: null, weekly: null, updatedAt: 0 };
-  let contextState = { tokens: 0, limit: 32000, estimated: true };
-  let planState = { tier: null, limit: null, updatedAt: 0 };
-  let bridgeReady = false;
-  let usageFetchId = 0;
-
-  const PLAN_LIMITS = {
-    FREE: 32000,
-    PLUS: 128000,
-    PRO: 1000000,
-    ULTRA: 1000000,
-    ADVANCED: 1000000
-  };
 
   // Load settings from storage
   function loadSettings() {
@@ -100,8 +75,8 @@
 
   // The bar is always auto-hidden on Gemini pages.
   function applyHideState() {
-    document.body.classList.add('better-gemini-enabled');
-    document.body.classList.add('better-gemini-active');
+    document.body.classList.add('hcb-enabled');
+    document.body.classList.add('hcb-active');
     applyHiddenOpacity(settings.hiddenOpacity);
     applyHideDelay();
     applyRevealMode();
@@ -113,18 +88,18 @@
 
   function applyRevealMode() {
     const hover = revealMode() === 'hover';
-    document.body.classList.toggle('better-gemini-reveal-hover', hover);
-    if (hover) document.body.classList.remove('better-gemini-opened');
+    document.body.classList.toggle('hcb-reveal-hover', hover);
+    if (hover) document.body.classList.remove('hcb-opened');
     else setHoverRevealed(false, true);
   }
 
   function applyHiddenOpacity(percent) {
-    document.documentElement.style.setProperty('--better-gemini-hidden-opacity', String(percent / 100));
+    document.documentElement.style.setProperty('--hcb-hidden-opacity', String(percent / 100));
   }
 
   function applyHideDelay(ms = settings.hideDelayMs) {
     const delay = settings.hideDelayEnabled ? ms : 0;
-    document.documentElement.style.setProperty('--better-gemini-hide-delay', `${delay}ms`);
+    document.documentElement.style.setProperty('--hcb-hide-delay', `${delay}ms`);
   }
 
   function clampDelayMs(ms) {
@@ -167,7 +142,8 @@
   // rather than sitting beside it.
   function asObstacle(el, px, py, viewport) {
     if (el === document.documentElement || el === document.body) return null;
-    if (el.id === 'better-gemini-footer' || el.closest('#better-gemini-footer')) return null;
+    // The Usage Tracker for Gemini line sits under the bar and moves with it.
+    if (el.closest('#gemini-usage-footer')) return null;
 
     // Our own settings host (shadow root) - use the visible widget size.
     if (el === hostElement && pillElement) {
@@ -175,7 +151,7 @@
     }
 
     // The chat bar counts even while hidden, since it can come back at any time.
-    const bar = el.closest('.better-gemini-bar');
+    const bar = el.closest('.hcb-bar');
     if (bar) return { rect: bar.getBoundingClientRect(), content: false };
 
     const style = getComputedStyle(el);
@@ -272,7 +248,7 @@
       const x = side === 'left' ? 1 : viewport.width - 2;
       for (const fraction of [0.3, 0.5, 0.7]) {
         const hit = document.elementsFromPoint(x, viewport.height * fraction).find(
-        (el) => el !== hostElement && el !== footerElement
+        (el) => el !== hostElement
       );
         for (let node = hit; node && node !== document.body && node !== document.documentElement; node = node.parentElement) {
           const rect = node.getBoundingClientRect();
@@ -419,7 +395,6 @@
       fitMenu(x, y, viewport, area);
       pillElement.classList.add('placed');
     }
-    placeChatFooter();
   }
 
   function schedulePlacement() {
@@ -912,16 +887,11 @@
     const pillStyle = PILL_STYLES.includes(settings.pillStyle) ? settings.pillStyle : 'icon';
     return `
       <div class="pill-container pos-${settings.corner} style-${pillStyle}">
-        <button class="pill-button" aria-label="Better Gemini settings" title="Better Gemini settings" aria-haspopup="true" aria-expanded="false" aria-controls="better-gemini-settings">
+        <button class="pill-button" aria-label="Hide Chat Bar settings" title="Hide Chat Bar settings" aria-haspopup="true" aria-expanded="false" aria-controls="hcb-settings">
           ${PILL_ICON_SVG}
-          <span class="pill-label">Better Gemini</span>
+          <span class="pill-label">Hide Chat Bar</span>
         </button>
-        <div class="menu" id="better-gemini-settings">
-          <div class="menu-header">Features</div>
-          ${toggleRowHTML('showUsage', 'Usage tracker', 'Current Usage and Weekly Usage with reset times')}
-          ${toggleRowHTML('showContext', 'Context window', 'Tokens used in this chat, under the bar')}
-          ${toggleRowHTML('showTimelines', 'Message versions', 'Keep parallel versions when you edit a prompt (Claude-style)')}
-          <div class="divider"></div>
+        <div class="menu" id="hcb-settings">
           <div class="menu-header">Chat bar</div>
           <span class="menu-item-label choice-label" id="reveal-label">Show the chat bar on</span>
           <div class="choice-grid reveal-selector" role="group" aria-labelledby="reveal-label">
@@ -1051,12 +1021,7 @@
       syncChoiceUI();
     }
     if (key === 'avoidOverlap') placePillNow();
-    if (key === 'showUsage' || key === 'showContext') {
-      syncToggleUI();
-      updateFooterVisibility();
-      placeChatFooter();
-    }
-    if (TOGGLE_KEYS.includes(key) && key !== 'showUsage' && key !== 'showContext') syncToggleUI();
+    if (TOGGLE_KEYS.includes(key)) syncToggleUI();
   }
 
   // Repositions even while the menu is open, for changes made from the menu.
@@ -1089,10 +1054,10 @@
 
   // Initialize the pill UI
   function createPill() {
-    if (document.getElementById('better-gemini-pill-host')) return;
+    if (document.getElementById('hcb-pill-host')) return;
 
     hostElement = document.createElement('div');
-    hostElement.id = 'better-gemini-pill-host';
+    hostElement.id = 'hcb-pill-host';
 
     shadowRoot = hostElement.attachShadow({ mode: 'closed' });
 
@@ -1392,7 +1357,7 @@
 
   function syncBarHeight(bar) {
     if (!bar) return;
-    document.documentElement.style.setProperty('--better-gemini-bar-height', `${bar.offsetHeight}px`);
+    document.documentElement.style.setProperty('--hcb-bar-height', `${bar.offsetHeight}px`);
   }
 
   const barResizeObserver = new ResizeObserver(() => {
@@ -1421,17 +1386,17 @@
   function trackBar() {
     const bar = findBar();
     if (bar === barElement) {
-      if (bar && !bar.classList.contains('better-gemini-bar')) bar.classList.add('better-gemini-bar');
+      if (bar && !bar.classList.contains('hcb-bar')) bar.classList.add('hcb-bar');
       return false;
     }
 
     if (barElement) {
-      barElement.classList.remove('better-gemini-bar', 'better-gemini-revealed');
+      barElement.classList.remove('hcb-bar', 'hcb-revealed');
       barResizeObserver.unobserve(barElement);
     }
     barElement = bar;
     if (bar) {
-      bar.classList.add('better-gemini-bar');
+      bar.classList.add('hcb-bar');
       barResizeObserver.observe(bar);
       syncBarHeight(bar);
     }
@@ -1444,7 +1409,7 @@
   function updateDockState() {
     const bar = barElement;
     if (!bar || !bar.isConnected) {
-      document.body.classList.remove('better-gemini-docked');
+      document.body.classList.remove('hcb-docked');
       return;
     }
     if (isSliding() || marginIsGliding(bar)) return;
@@ -1457,21 +1422,21 @@
     let top = 0;
     let bottom = 0;
     try {
-      document.body.classList.add('better-gemini-measuring');
+      document.body.classList.add('hcb-measuring');
       const rect = bar.getBoundingClientRect();
       top = rect.top;
       bottom = rect.bottom;
-      document.body.classList.remove('better-gemini-measuring');
+      document.body.classList.remove('hcb-measuring');
       const distance = window.innerHeight - bottom;
       const height = bottom - top;
       // A docked composer sits low, close to the bottom edge, and is not a
       // tall page wrapper. The centered new-chat bar fails this test.
       const docked = height > 0 && height < window.innerHeight * 0.55 &&
         top > window.innerHeight * 0.35 && distance >= -40 && distance <= 140;
-      document.body.classList.toggle('better-gemini-docked', docked);
+      document.body.classList.toggle('hcb-docked', docked);
       void bar.offsetHeight;
     } finally {
-      document.body.classList.remove('better-gemini-measuring');
+      document.body.classList.remove('hcb-measuring');
       if (previousTransition) bar.style.setProperty('transition', previousTransition, previousPriority);
       else bar.style.removeProperty('transition');
     }
@@ -1486,17 +1451,17 @@
   }
 
   function barIsDocked() {
-    return document.body.classList.contains('better-gemini-docked');
+    return document.body.classList.contains('hcb-docked');
   }
 
   // Focus, a draft, click-to-open, or a hover hold means the bar is back in
   // its own space instead of floating over the conversation.
   function barCoversNaturally() {
     if (!barElement || !barIsDocked()) return false;
-    if (barElement.classList.contains('better-gemini-revealed')) return true;
+    if (barElement.classList.contains('hcb-revealed')) return true;
     if (barElement.matches(':focus-within')) return true;
     if (document.body.classList.contains('has-content')) return true;
-    return document.body.classList.contains('better-gemini-opened') && revealMode() === 'click';
+    return document.body.classList.contains('hcb-opened') && revealMode() === 'click';
   }
 
   // The strip at the very bottom of the screen, under the floating bar.
@@ -1831,7 +1796,7 @@
   let revealHoldTimer = null;
   function setHoverRevealed(on, immediate = false) {
     if (!barElement) return;
-    const revealed = barElement.classList.contains('better-gemini-revealed');
+    const revealed = barElement.classList.contains('hcb-revealed');
     if (on) {
       if (revealHoldTimer) {
         clearTimeout(revealHoldTimer);
@@ -1840,7 +1805,7 @@
       if (!revealed) {
         markSliding(0);
         armBottomFollow();
-        barElement.classList.add('better-gemini-revealed');
+        barElement.classList.add('hcb-revealed');
         followBottom(0);
       }
       return;
@@ -1854,7 +1819,7 @@
     if (immediate) {
       markSliding(hideFollowDelay());
       armBottomFollow();
-      barElement.classList.remove('better-gemini-revealed');
+      barElement.classList.remove('hcb-revealed');
       followBottom(hideFollowDelay());
       return;
     }
@@ -1864,7 +1829,7 @@
       if (!barElement) return;
       markSliding(hideFollowDelay());
       armBottomFollow();
-      barElement.classList.remove('better-gemini-revealed');
+      barElement.classList.remove('hcb-revealed');
       followBottom(hideFollowDelay());
     }, delay);
   }
@@ -1906,7 +1871,7 @@
       markSliding(0);
       armBottomFollow();
     }
-    document.body.classList.add('better-gemini-opened');
+    document.body.classList.add('hcb-opened');
     if (barIsDocked()) followBottom(0);
     const interactive = e.target instanceof Element &&
       e.target.closest('button, a, input, textarea, select, [contenteditable="true"], [role="button"]');
@@ -1938,7 +1903,7 @@
         if (overAction) return;
         markSliding(hideFollowDelay());
         armBottomFollow();
-        document.body.classList.remove('better-gemini-opened');
+        document.body.classList.remove('hcb-opened');
         followBottom(hideFollowDelay());
         return;
       }
@@ -1947,7 +1912,7 @@
         openBarFromPointer(e);
         return;
       }
-      document.body.classList.remove('better-gemini-opened');
+      document.body.classList.remove('hcb-opened');
     }, true);
   }
 
@@ -1999,596 +1964,14 @@
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Usage tracker (Current + Weekly from Gemini's own limits RPC)
-  // ---------------------------------------------------------------------------
-
-  function levelClass(percent) {
-    if (percent >= DANGER_AT * 100) return 'level-danger';
-    if (percent >= WARN_AT * 100) return 'level-warn';
-    return 'level-ok';
-  }
-
-  function formatReset(epochSec) {
-    if (!epochSec) return '';
-    try {
-      const d = new Date(epochSec * 1000);
-      const n = new Date();
-      const sameDay = d.toDateString() === n.toDateString();
-      let hours = d.getHours();
-      const mins = String(d.getMinutes()).padStart(2, '0');
-      const ap = hours >= 12 ? 'pm' : 'am';
-      hours = hours % 12 || 12;
-      const time = `${hours}:${mins}${ap}`;
-      if (sameDay) return time;
-      const day = d.toLocaleDateString(undefined, { weekday: 'short' });
-      return `${day} ${time}`;
-    } catch (_) {
-      return '';
-    }
-  }
-
-  function openUsagePage() {
-    const match = location.pathname.match(/^\/u\/(\d+)/);
-    location.href = match ? `/u/${match[1]}/usage` : '/usage';
-  }
-
-  function buildUsageStack(kind, metric) {
-    const stack = document.createElement('div');
-    stack.className = 'bg-stack';
-
-    const top = document.createElement('div');
-    top.className = 'bg-stack-top';
-
-    const label = document.createElement('span');
-    label.className = 'bg-label';
-    label.textContent = kind === 'current' ? 'Current Usage' : 'Weekly Usage';
-
-    const sep = document.createElement('span');
-    sep.className = 'bg-sep';
-    sep.textContent = '\u00B7';
-
-    const value = document.createElement('span');
-    value.className = 'bg-value';
-    value.textContent = metric ? `${metric.percent}%` : '-';
-
-    top.appendChild(label);
-    top.appendChild(sep);
-    top.appendChild(value);
-
-    const reset = document.createElement('div');
-    reset.className = 'bg-stack-meta';
-
-    const resetLabel = document.createElement('span');
-    resetLabel.className = 'bg-label';
-    resetLabel.textContent = 'Resets';
-
-    const resetSep = document.createElement('span');
-    resetSep.className = 'bg-sep';
-    resetSep.textContent = '\u00B7';
-
-    const resetValue = document.createElement('span');
-    resetValue.className = 'bg-value bg-value-meta';
-    const when = formatReset(metric && metric.resetEpoch);
-    resetValue.textContent = when || '—';
-
-    reset.appendChild(resetLabel);
-    reset.appendChild(resetSep);
-    reset.appendChild(resetValue);
-
-    stack.appendChild(top);
-    stack.appendChild(reset);
-    return stack;
-  }
-
-  function renderUsageLabel() {
-    if (!usageElement) return;
-    const current = usageState.current;
-    const weekly = usageState.weekly;
-    const worst = Math.max(current ? current.percent : 0, weekly ? weekly.percent : 0);
-    usageElement.classList.remove('level-ok', 'level-warn', 'level-danger');
-    usageElement.classList.add(levelClass(worst));
-    usageElement.textContent = '';
-    usageElement.appendChild(buildUsageStack('current', current));
-    usageElement.appendChild(buildUsageStack('weekly', weekly));
-    const resets = [formatReset(current && current.resetEpoch), formatReset(weekly && weekly.resetEpoch)]
-      .filter(Boolean)
-      .join(' / ');
-    usageElement.title = resets
-      ? `Gemini usage limits. Resets ${resets}. Click for details.`
-      : 'Gemini usage limits. Click for details.';
-    placeChatFooter();
-  }
-
-  function bridgePost(type, extra = {}) {
-    window.postMessage({ source: BRIDGE_CMD, type, ...extra }, window.location.origin);
-  }
-
-  function applyPlanTier(tier) {
-    if (!tier) return;
-    const key = String(tier).toUpperCase().replace(/^GOOGLE\s+AI\s+/, '');
-    const limit = PLAN_LIMITS[key];
-    if (!limit) return;
-    planState = { tier: key, limit, updatedAt: Date.now() };
-    chrome.storage.local.set({ betterGeminiPlan: planState });
-    contextState.limit = resolveContextLimit(contextState.tokens);
-    renderContextLabel();
-  }
-
-  function requestUsageFetch() {
-    // Refresh usage percentages and/or plan tier (needed for the context limit).
-    if (!settings.showUsage && !settings.showContext) return;
-    const id = ++usageFetchId;
-    bridgePost('fetch-usage', { id });
-  }
-
-  function watchBridge() {
-    window.addEventListener('message', (event) => {
-      if (event.source !== window || !event.data || event.data.source !== BRIDGE_SRC) return;
-      const { type, payload } = event.data;
-
-      if (type === 'ready') {
-        bridgeReady = true;
-        requestUsageFetch();
-        return;
-      }
-
-      if (type === 'usage' && payload) {
-        if (payload.id && payload.id !== usageFetchId) return;
-        if (!payload.ok) return;
-        if (payload.tier) applyPlanTier(payload.tier);
-        if (payload.usage) {
-          const { current, weekly } = payload.usage;
-          usageState = {
-            current: current ? { percent: current.percent, resetEpoch: current.resetEpoch } : usageState.current,
-            weekly: weekly ? { percent: weekly.percent, resetEpoch: weekly.resetEpoch } : usageState.weekly,
-            updatedAt: Date.now()
-          };
-          chrome.storage.local.set({ betterGeminiUsage: usageState });
-          renderUsageLabel();
-        }
-        return;
-      }
-
-      if (type === 'usageMetadata' && payload) {
-        // After a reply, context used is input history + this output.
-        const prompt = Number(payload.promptTokenCount) || 0;
-        const candidates = Number(payload.candidatesTokenCount) || 0;
-        const total = Number(payload.totalTokenCount) || 0;
-        const used = Math.max(total, prompt + candidates, prompt);
-        if (used > 0) {
-          setContextTokens(used, false);
-          persistContextState();
-          if (settings.showUsage) setTimeout(() => requestUsageFetch(), 2500);
-        }
-      }
-    });
-
-    bridgePost('ping');
-    setInterval(() => {
-      if (document.hidden) return;
-      requestUsageFetch();
-    }, 120000);
-    document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) requestUsageFetch();
-    });
-  }
-
-  // ---------------------------------------------------------------------------
-  // Context window (beside the chat bar)
-  // Gemini Apps sets the limit by Google AI plan (32k / 128k / 1M), not by
-  // which model (Flash / Pro) is selected. See Google's Gemini Apps help.
-  // ---------------------------------------------------------------------------
-
-  function detectContextLimit() {
-    // Prefer the plan read from Gemini's Usage limits page / RPC.
-    if (planState.limit && CONTEXT_TIERS.includes(planState.limit)) return planState.limit;
-
-    const nodes = document.querySelectorAll(
-      '[data-test-id*="plan"], [aria-label*="Google AI"], [aria-label*="AI Pro"], [aria-label*="AI Ultra"], [aria-label*="AI Plus"]'
-    );
-    for (const el of nodes) {
-      const label = `${el.getAttribute('aria-label') || ''} ${el.textContent || ''}`;
-      if (/Ultra/i.test(label) && !/Upgrade/i.test(label)) return 1000000;
-      if (/\bPro\b/i.test(label) && !/Upgrade/i.test(label)) return 1000000;
-      if (/Plus/i.test(label) && !/Upgrade/i.test(label)) return 128000;
-    }
-
-    const sample = (document.body && document.body.innerText || '').slice(0, 12000);
-    if (/Google AI Ultra|\bAI Ultra\b/i.test(sample) && !/Upgrade to.*Ultra/i.test(sample)) return 1000000;
-    if (/Google AI Pro|\bAI Pro\b/i.test(sample) && !/Upgrade to Google AI Pro/i.test(sample)) return 1000000;
-    if (/Google AI Plus|\bAI Plus\b/i.test(sample) && !/Upgrade to Google AI Plus/i.test(sample)) return 128000;
-
-    // On the usage page itself, scrape the tier badge.
-    if (/\/usage(?:\/|$)/.test(location.pathname)) {
-      const root =
-        document.querySelector('usage-metrics-window') ||
-        document.querySelector('.usage-metrics-container') ||
-        document.querySelector('.usage-metrics-header');
-      const text = ((root && root.textContent) || '').replace(/\s+/g, ' ');
-      const match = text.match(/\b(?:GOOGLE\s+AI\s+)?(FREE|PLUS|PRO|ULTRA)\b/i);
-      if (match) {
-        const limit = PLAN_LIMITS[match[1].toUpperCase()];
-        if (limit) {
-          applyPlanTier(match[1].toUpperCase());
-          return limit;
-        }
-      }
-    }
-
-    return contextState.limit && CONTEXT_TIERS.includes(contextState.limit)
-      ? contextState.limit
-      : 32000;
-  }
-
-  function resolveContextLimit(used) {
-    let limit = detectContextLimit();
-    if (!CONTEXT_TIERS.includes(limit)) {
-      limit = CONTEXT_TIERS.find((t) => t >= used) || CONTEXT_TIERS[0];
-    }
-    while (used > limit) {
-      const idx = CONTEXT_TIERS.indexOf(limit);
-      if (idx < 0 || idx >= CONTEXT_TIERS.length - 1) break;
-      limit = CONTEXT_TIERS[idx + 1];
-    }
-    return limit;
-  }
-
-  function formatTokens(n) {
-    if (n >= 1000000) return `${(n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1)}M`;
-    if (n >= 1000) {
-      const rounded = n >= 10000 ? Math.round(n / 1000) : Math.round(n / 100) / 10;
-      return `${rounded}k`.replace('.0k', 'k');
-    }
-    return String(Math.round(n));
-  }
-
-  // Walk light DOM and open shadow roots so Angular/Lit message text is counted.
-  function collectVisibleText(root, parts, depth) {
-    if (!root || depth > 24) return;
-    if (root.nodeType === Node.TEXT_NODE) {
-      const text = (root.textContent || '').replace(/\s+/g, ' ').trim();
-      if (text) parts.push(text);
-      return;
-    }
-    if (root.nodeType !== Node.ELEMENT_NODE && !(root instanceof ShadowRoot)) return;
-
-    if (root instanceof Element) {
-      const tag = root.tagName;
-      if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'SVG') return;
-      if (root.id === 'better-gemini-footer' || root.id === 'better-gemini-pill-host') return;
-      if (root.getAttribute('aria-hidden') === 'true') return;
-      if (root.shadowRoot) collectVisibleText(root.shadowRoot, parts, depth + 1);
-    }
-
-    const children = root.childNodes;
-    for (let i = 0; i < children.length; i++) {
-      collectVisibleText(children[i], parts, depth + 1);
-    }
-  }
-
-  function conversationRoots() {
-    const roots = [];
-    const selectors = [
-      'chat-window',
-      'infinite-scroller',
-      '.chat-history',
-      '[data-test-id="chat-history"]',
-      'message-content',
-      'user-query',
-      'model-response',
-      '.conversation-container',
-      '[class*="conversation"]'
-    ];
-    for (const sel of selectors) {
-      document.querySelectorAll(sel).forEach((el) => roots.push(el));
-    }
-    // Deduplicate nested roots: keep outermost only.
-    return roots.filter((el, i, all) => !all.some((other, j) => j !== i && other.contains(el)));
-  }
-
-  function estimateTokensFromDom() {
-    const parts = [];
-    const roots = conversationRoots();
-    if (roots.length) {
-      for (const root of roots) collectVisibleText(root, parts, 0);
-    } else {
-      // Fallback: sample the main column above the composer, not the whole page chrome.
-      if (barElement) {
-        const barRect = barElement.getBoundingClientRect();
-        const x = Math.min(window.innerWidth - 2, Math.max(2, barRect.left + barRect.width / 2));
-        const y = Math.max(40, barRect.top - 80);
-        const hit = document.elementFromPoint(x, y);
-        let node = hit;
-        while (node && node !== document.body) {
-          if (node.scrollHeight > window.innerHeight * 0.35) {
-            collectVisibleText(node, parts, 0);
-            break;
-          }
-          node = node.parentElement;
-        }
-      }
-    }
-
-    let text = parts.join('\n');
-    // Strip repeated UI chrome that often leaks into conversation containers.
-    text = text
-      .replace(/Gemini is AI and can make mistakes\.?/gi, '')
-      .replace(/Better Gemini[\s\S]{0,40}context/gi, '')
-      .replace(/\b(New chat|Settings|Gemini Apps|Google Account)\b/gi, '');
-
-    if (!text.trim()) return 0;
-    // ~4 chars/token is the usual English heuristic until Gemini returns exact counts.
-    return Math.max(0, Math.ceil(text.length / 4));
-  }
-
-  function setContextTokens(tokens, estimated) {
-    const next = Math.max(0, Math.round(tokens));
-    if (!estimated) {
-      // Exact counts from Gemini always win.
-      contextState.tokens = next;
-      contextState.estimated = false;
-    } else if (!contextState.estimated && contextState.tokens > 0) {
-      // Keep the last exact reading; DOM estimates must not overwrite it.
-      contextState.limit = resolveContextLimit(contextState.tokens);
-      renderContextLabel();
-      return;
-    } else {
-      // Estimates only move upward (chat grows); ignore tiny downward DOM jitter.
-      if (next + 40 < contextState.tokens) {
-        renderContextLabel();
-        return;
-      }
-      contextState.tokens = Math.max(contextState.tokens, next);
-      contextState.estimated = true;
-    }
-    contextState.limit = resolveContextLimit(contextState.tokens);
-    renderContextLabel();
-  }
-
-  function persistContextState() {
-    const key = conversationKey();
-    chrome.storage.local.get(['betterGeminiContext'], (result) => {
-      const map = (result && result.betterGeminiContext) || {};
-      map[key] = {
-        tokens: contextState.tokens,
-        limit: contextState.limit,
-        estimated: contextState.estimated,
-        updatedAt: Date.now()
-      };
-      // Keep the map small.
-      const keys = Object.keys(map);
-      if (keys.length > 40) {
-        keys
-          .sort((a, b) => (map[a].updatedAt || 0) - (map[b].updatedAt || 0))
-          .slice(0, keys.length - 40)
-          .forEach((k) => { delete map[k]; });
-      }
-      chrome.storage.local.set({ betterGeminiContext: map });
-    });
-  }
-
-  function loadContextStateForChat() {
-    const key = conversationKey();
-    chrome.storage.local.get(['betterGeminiContext'], (result) => {
-      const saved = result && result.betterGeminiContext && result.betterGeminiContext[key];
-      if (saved && typeof saved.tokens === 'number' && saved.tokens > 0) {
-        contextState.tokens = saved.tokens;
-        contextState.estimated = saved.estimated !== false ? !!saved.estimated : false;
-        contextState.limit = resolveContextLimit(saved.tokens);
-        renderContextLabel();
-      }
-    });
-  }
-
-  function createChatFooter() {
-    if (document.getElementById('better-gemini-footer')) {
-      footerElement = document.getElementById('better-gemini-footer');
-      contextElement = footerElement.querySelector('.better-gemini-context');
-      usageElement = footerElement.querySelector('.better-gemini-usage');
-      const leftover = footerElement.querySelector('.better-gemini-footer-spacer');
-      if (leftover) leftover.remove();
-      return;
-    }
-
-    footerElement = document.createElement('div');
-    footerElement.id = 'better-gemini-footer';
-    footerElement.className = 'better-gemini-footer';
-
-    contextElement = document.createElement('div');
-    contextElement.className = 'better-gemini-context';
-    contextElement.setAttribute('aria-live', 'polite');
-
-    usageElement = document.createElement('div');
-    usageElement.className = 'better-gemini-usage';
-    usageElement.setAttribute('role', 'link');
-    usageElement.tabIndex = 0;
-    usageElement.addEventListener('click', openUsagePage);
-    usageElement.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        openUsagePage();
-      }
-    });
-
-    footerElement.appendChild(contextElement);
-    footerElement.appendChild(usageElement);
-    document.body.appendChild(footerElement);
-
-    updateFooterVisibility();
-    renderContextLabel();
-    renderUsageLabel();
-  }
-
-  function updateFooterVisibility() {
-    if (contextElement) contextElement.hidden = !settings.showContext;
-    if (usageElement) usageElement.hidden = !settings.showUsage;
-    if (footerElement) {
-      footerElement.hidden = !settings.showContext && !settings.showUsage;
-    }
-  }
-
-  function renderContextLabel() {
-    if (!contextElement) return;
-    const { tokens, limit } = contextState;
-    const ratio = limit > 0 ? tokens / limit : 0;
-    contextElement.classList.remove('level-ok', 'level-warn', 'level-danger');
-    contextElement.classList.add(
-      ratio >= DANGER_AT ? 'level-danger' : ratio >= WARN_AT ? 'level-warn' : 'level-ok'
-    );
-    contextElement.textContent = '';
-
-    const mark = document.createElement('span');
-    mark.className = 'bg-label';
-    mark.textContent = 'Context Window';
-
-    const sep = document.createElement('span');
-    sep.className = 'bg-sep';
-    sep.textContent = '\u00B7';
-
-    const value = document.createElement('span');
-    value.className = 'bg-value';
-    value.textContent = `${formatTokens(tokens)} / ${formatTokens(limit)}`;
-
-    contextElement.appendChild(mark);
-    contextElement.appendChild(sep);
-    contextElement.appendChild(value);
-    placeChatFooter();
-  }
-
-  function findDisclaimerEl() {
-    if (!barElement) return null;
-    const barRect = barElement.getBoundingClientRect();
-    const nodes = document.querySelectorAll('div, span, p');
-    for (const el of nodes) {
-      if (el.closest('#better-gemini-footer') || el.closest('#better-gemini-pill-host')) continue;
-      if (el.childElementCount > 2) continue;
-      const text = (el.textContent || '').trim();
-      if (!/^Gemini is AI and can make mistakes\.?$/i.test(text)) continue;
-      const rect = el.getBoundingClientRect();
-      if (rect.width < 40 || rect.height < 8) continue;
-      if (rect.top < barRect.bottom - 8 || rect.top > barRect.bottom + 48) continue;
-      return el;
-    }
-    return null;
-  }
-
-  // Footer box matches the chat bar width so Gemini's disclaimer stays centered
-  // under the bar. Context/usage hang flush outside the left/right edges.
-  function placeChatFooter() {
-    if (!footerElement || footerElement.hidden) return;
-    if (!barElement || !barElement.isConnected) {
-      footerElement.classList.remove('placed');
-      return;
-    }
-    const barRect = barElement.getBoundingClientRect();
-    if (barRect.width < 40 || barRect.height < 10) {
-      footerElement.classList.remove('placed');
-      return;
-    }
-
-    const disclaimer = findDisclaimerEl();
-    let top;
-    let height = settings.showUsage ? 32 : 16;
-    // Always force Gemini's sans stack. Copying computed font-family can fall
-    // through to the browser serif default (Times) on some builds.
-    footerElement.style.fontFamily = '"Google Sans", "Google Sans Text", Roboto, Arial, Helvetica, sans-serif';
-    footerElement.style.fontWeight = '400';
-    footerElement.style.fontStyle = 'normal';
-    footerElement.style.letterSpacing = '0.01em';
-    if (disclaimer) {
-      const d = disclaimer.getBoundingClientRect();
-      height = Math.max(height, Math.round(d.height));
-      // Keep our block vertically centered on the disclaimer so the Gemini
-      // line stays visually mid-row while twin stacks sit beside it.
-      top = d.top + d.height / 2 - height / 2;
-      const style = getComputedStyle(disclaimer);
-      footerElement.style.fontSize = style.fontSize || '12px';
-      footerElement.style.lineHeight = '15px';
-      footerElement.style.color = style.color || '#5f6368';
-    } else {
-      top = barRect.bottom + (barIsDocked() && !barCoversNaturally() ? 2 : 8);
-      footerElement.style.fontSize = '12px';
-      footerElement.style.lineHeight = '15px';
-      footerElement.style.color = '';
-    }
-
-    footerElement.style.transform = '';
-    footerElement.style.maxWidth = '';
-    footerElement.style.left = `${Math.round(barRect.left)}px`;
-    footerElement.style.width = `${Math.round(barRect.width)}px`;
-    footerElement.style.top = `${Math.round(top)}px`;
-    footerElement.style.height = `${Math.round(height)}px`;
-    footerElement.classList.toggle('theme-dark', isGeminiDark());
-    footerElement.classList.add('placed');
-  }
-
-  function conversationKey() {
-    const match = location.pathname.match(/\/(?:app|c|u\/\d+\/app)\/([^/?#]+)/);
-    if (match) return match[1];
-    const u = location.pathname.match(/^\/u\/(\d+)/);
-    return u ? `u/${u[1]}${location.pathname}` : location.pathname;
-  }
-
-  function watchContext() {
-    let lastKey = conversationKey();
-    let estimateTimer = null;
-
-    const refreshEstimate = () => {
-      if (!settings.showContext) return;
-      const estimate = estimateTokensFromDom();
-      if (estimate > 0 || contextState.estimated) setContextTokens(estimate, true);
-      if (estimate > 0) persistContextState();
-    };
-
-    setInterval(() => {
-      const key = conversationKey();
-      if (key !== lastKey) {
-        lastKey = key;
-        contextState = { tokens: 0, limit: detectContextLimit(), estimated: true };
-        loadContextStateForChat();
-        refreshEstimate();
-      }
-      placeChatFooter();
-    }, 1000);
-
-    new MutationObserver(() => {
-      if (estimateTimer) clearTimeout(estimateTimer);
-      estimateTimer = setTimeout(refreshEstimate, 400);
-    }).observe(document.body, { childList: true, subtree: true, characterData: true });
-
-    loadContextStateForChat();
-    refreshEstimate();
-  }
-
   async function init() {
     await loadSettings();
-    chrome.storage.local.get(['betterGeminiUsage', 'betterGeminiPlan'], (result) => {
-      if (result && result.betterGeminiUsage) {
-        usageState = { ...usageState, ...result.betterGeminiUsage };
-        renderUsageLabel();
-      }
-      if (result && result.betterGeminiPlan && result.betterGeminiPlan.limit) {
-        planState = { ...planState, ...result.betterGeminiPlan };
-        contextState.limit = resolveContextLimit(contextState.tokens);
-        renderContextLabel();
-      }
-    });
     applyHideState();
     createPill();
-    createChatFooter();
-    watchBridge();
-    watchContext();
     watchInputContent();
     watchTyping();
     watchBarClicks();
     watchHoverReveal();
-
-    const themeWatcher = new MutationObserver(() => {
-      applyPillTheme();
-      if (footerElement) footerElement.classList.toggle('theme-dark', isGeminiDark());
-    });
-    themeWatcher.observe(document.body, { attributes: true, attributeFilter: ['class'] });
   }
 
   if (document.readyState === 'loading') {
@@ -2597,4 +1980,3 @@
     init();
   }
 })();
-

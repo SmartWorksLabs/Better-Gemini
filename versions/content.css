@@ -1,0 +1,112 @@
+/* Message Versions for Gemini — version controls and saved copies */
+
+.mv-controls {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 0 8px;
+  padding: 0;
+  width: auto;
+  max-width: none;
+  flex: 0 0 auto;
+  vertical-align: middle;
+  white-space: nowrap;
+  user-select: none;
+  font-family: "Google Sans", "Google Sans Text", Roboto, Arial, Helvetica, sans-serif !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  font-style: normal !important;
+  line-height: 1;
+  color: #5f6368;
+  opacity: 1;
+  writing-mode: horizontal-tb;
+  position: relative;
+  z-index: 5;
+}
+
+/* Kill Gemini's focus/selection halo around version controls. */
+user-query:has(.mv-controls):focus,
+user-query:has(.mv-controls):focus-within,
+user-query:has(.mv-controls) .user-query-bubble-with-background,
+user-query:has(.mv-controls) .user-query-bubble-container,
+user-query:has(.mv-controls) [class*="user-query-bubble"] {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+/* A saved version is shown by hiding Gemini's live turns and inserting copies beside them. */
+[data-mv-hidden="1"] {
+  display: none !important;
+}
+
+[data-mv-run] {
+  display: contents;
+}
+
+/* Saved copies are read-only: Gemini's own buttons would do nothing in them. */
+[data-mv-clone] button:not(.mv-btn),
+[data-mv-clone] [role="button"] {
+  pointer-events: none !important;
+}
+
+.mv-canvas-placeholder {
+  margin: 8px 0;
+  padding: 12px 16px;
+  border: 1px dashed currentColor;
+  border-radius: 12px;
+  opacity: 0.6;
+  font-size: 13px;
+}
+
+body.dark-theme .mv-controls {
+  color: #9aa0a6;
+}
+
+.mv-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: inherit !important;
+  font-size: 16px;
+  line-height: 1;
+  outline: none;
+  pointer-events: auto !important;
+  position: relative;
+  z-index: 6;
+}
+
+.mv-controls,
+.mv-btn {
+  pointer-events: auto !important;
+}
+
+.mv-btn:focus,
+.mv-btn:focus-visible {
+  outline: none;
+}
+
+.mv-btn:hover:not(:disabled) {
+  background: rgba(60, 64, 67, 0.08);
+}
+
+body.dark-theme .mv-btn:hover:not(:disabled) {
+  background: rgba(232, 234, 237, 0.08);
+}
+
+.mv-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.mv-count {
+  font-family: inherit !important;
+  font-variant-numeric: tabular-nums;
+  min-width: 2.75em;
+  text-align: center;
+  font-weight: 500;
+  color: inherit;
+}

@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Usage Tracker for Gemini",
+  "version": "1.0.0",
+  "description": "See your Gemini Current and Weekly usage limits and how full this chat's context window is, right under the chat bar. Not affiliated with Google.",
+  "homepage_url": "https://github.com/SmartWorksLabs/Better-Gemini/tree/main/usage",
+  "permissions": ["storage"],
+  "content_scripts": [
+    {
+      "matches": ["*://gemini.google.com/*"],
+      "js": ["bridge.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["*://gemini.google.com/*"],
+      "js": ["usage.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Usage Tracker for Gemini",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

@@ -1,0 +1,192 @@
+/* Usage Tracker for Gemini — content styles */
+
+/* Footer box matches the chat bar width (disclaimer stays centered under it).
+   Context hangs left of the bar; usage hangs right — 0px gap. */
+.gemini-usage-footer {
+  position: fixed;
+  z-index: 999990;
+  display: none;
+  padding: 0;
+  box-sizing: border-box;
+  pointer-events: none;
+  font-family: "Google Sans", "Google Sans Text", Roboto, Arial, Helvetica, sans-serif !important;
+  font-size: 12px !important;
+  font-weight: 400 !important;
+  font-style: normal !important;
+  line-height: 15px !important;
+  letter-spacing: 0.01em !important;
+  color: #5f6368;
+  white-space: nowrap;
+}
+
+body.dark-theme .gemini-usage-footer,
+.gemini-usage-footer.theme-dark {
+  color: #9aa0a6;
+}
+
+.gemini-usage-footer.placed:not([hidden]) {
+  display: block;
+}
+
+.gemini-usage-context,
+.gemini-usage-pills {
+  position: absolute;
+  top: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-family: inherit !important;
+  font-size: inherit !important;
+  font-weight: 400 !important;
+  font-style: normal !important;
+  line-height: inherit !important;
+  letter-spacing: inherit !important;
+  color: inherit;
+  white-space: nowrap;
+  transform: translateY(-50%);
+}
+
+.gemini-usage-context {
+  right: 100%;
+  margin-right: 0;
+  justify-content: flex-end;
+}
+
+.gemini-usage-pills {
+  left: 100%;
+  margin-left: 0;
+  pointer-events: auto;
+  cursor: pointer;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: flex-start;
+  max-width: none;
+  overflow: visible;
+}
+
+.gemini-usage-context[hidden],
+.gemini-usage-pills[hidden] {
+  display: none !important;
+}
+
+/* Shared type roles — same on context and usage */
+.gemini-usage-footer .gu-label,
+.gemini-usage-footer .gu-sep,
+.gemini-usage-footer .gu-value,
+.gemini-usage-footer .gu-stack-top,
+.gemini-usage-footer .gu-stack-meta {
+  font-family: inherit !important;
+  font-size: inherit !important;
+  font-style: normal !important;
+  line-height: inherit !important;
+  letter-spacing: inherit !important;
+  vertical-align: baseline;
+}
+
+.gemini-usage-footer .gu-label {
+  font-weight: 400 !important;
+  opacity: 1;
+  color: #202124;
+}
+
+body.dark-theme .gemini-usage-footer .gu-label,
+.gemini-usage-footer.theme-dark .gu-label {
+  color: #e8eaed;
+}
+
+/* Resets stays softer; warn/danger still tint via parent color */
+.gemini-usage-footer .gu-stack-meta .gu-label {
+  color: inherit;
+  opacity: 0.72;
+}
+
+.gemini-usage-context.level-warn .gu-label,
+.gemini-usage-context.level-danger .gu-label,
+.gemini-usage-pills.level-warn > .gu-stack > .gu-stack-top .gu-label,
+.gemini-usage-pills.level-danger > .gu-stack > .gu-stack-top .gu-label {
+  color: inherit;
+}
+
+.gemini-usage-footer .gu-sep {
+  font-weight: 400 !important;
+  opacity: 0.4;
+  margin: 0 0.35em;
+}
+
+.gemini-usage-footer .gu-value {
+  font-weight: 500 !important;
+  font-variant-numeric: tabular-nums;
+  opacity: 1;
+  color: #202124;
+}
+
+body.dark-theme .gemini-usage-footer .gu-value,
+.gemini-usage-footer.theme-dark .gu-value {
+  color: #e8eaed;
+}
+
+.gemini-usage-context.level-warn .gu-value,
+.gemini-usage-context.level-danger .gu-value,
+.gemini-usage-pills.level-warn .gu-value:not(.gu-value-meta),
+.gemini-usage-pills.level-danger .gu-value:not(.gu-value-meta) {
+  color: inherit;
+}
+
+/* Reset times: same size; softer, keep muted (not black) */
+.gemini-usage-footer .gu-value-meta {
+  font-weight: 400 !important;
+  opacity: 0.85;
+  color: inherit;
+}
+
+.gemini-usage-pills .gu-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  white-space: nowrap;
+  gap: 1px;
+  line-height: inherit;
+}
+
+.gemini-usage-pills .gu-stack-top,
+.gemini-usage-pills .gu-stack-meta {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.gemini-usage-pills:hover .gu-stack-top .gu-value {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.gemini-usage-pills:focus-visible {
+  outline: 2px solid #0b57d0;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.gemini-usage-context.level-warn,
+.gemini-usage-pills.level-warn {
+  color: #b06000;
+}
+
+.gemini-usage-context.level-danger,
+.gemini-usage-pills.level-danger {
+  color: #b3261e;
+}
+
+body.dark-theme .gemini-usage-context.level-warn,
+body.dark-theme .gemini-usage-pills.level-warn,
+.gemini-usage-footer.theme-dark .level-warn {
+  color: #fdd663;
+}
+
+body.dark-theme .gemini-usage-context.level-danger,
+body.dark-theme .gemini-usage-pills.level-danger,
+.gemini-usage-footer.theme-dark .level-danger {
+  color: #f2b8b5;
+}

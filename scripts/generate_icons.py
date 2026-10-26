@@ -1,13 +1,16 @@
-"""Generate the extension icons and the Chrome Web Store icon from the logo.
+"""Generate an extension's icons and its Chrome Web Store icon from its logo.
 
-Run from the repo root: python3 scripts/generate_icons.py
+Run from the repo root with the extension's folder:
+    python3 scripts/generate_icons.py hide-chat-bar
 
-icons/better-gemini-logo.png -> icons/icon{size}.png
-                             -> store/better-gemini-store-icon.png
+<folder>/icons/logo.png -> <folder>/icons/icon{size}.png
+                        -> <folder>/store/store-icon.png
 """
+import os
+import sys
+
 from PIL import Image, ImageDraw
 
-SOURCE = 'icons/better-gemini-logo.png'
 # 16 and 32 are the toolbar sizes (32 for high-resolution screens),
 # 48 is used on the extensions page, 128 in the Chrome Web Store.
 SIZES = (16, 32, 48, 128)
@@ -15,7 +18,6 @@ SIZES = (16, 32, 48, 128)
 # The store listing icon is uploaded separately in the developer dashboard, so
 # it can sit on a rounded tile while the installed icons stay transparent.
 # Google's guidelines: 128x128 canvas, 96x96 artwork, 16px transparent padding.
-STORE_ICON = 'store/better-gemini-store-icon.png'
 STORE_SIZE = 128
 STORE_TILE = 96
 STORE_RADIUS = 22
@@ -65,9 +67,13 @@ def store_icon(source):
 
 
 if __name__ == '__main__':
-    source = Image.open(SOURCE).convert('RGBA')
+    if len(sys.argv) != 2:
+        sys.exit('usage: python3 scripts/generate_icons.py <extension folder>')
+    folder = sys.argv[1]
+    source = Image.open(os.path.join(folder, 'icons', 'logo.png')).convert('RGBA')
     logo = trim_border(source)
     for size in SIZES:
         icon = clear_faint_pixels(logo.resize((size, size), Image.LANCZOS))
-        icon.save(f'icons/icon{size}.png', 'PNG', optimize=True)
-    store_icon(source).save(STORE_ICON, 'PNG', optimize=True)
+        icon.save(os.path.join(folder, 'icons', f'icon{size}.png'), 'PNG', optimize=True)
+    os.makedirs(os.path.join(folder, 'store'), exist_ok=True)
+    store_icon(source).save(os.path.join(folder, 'store', 'store-icon.png'), 'PNG', optimize=True)
