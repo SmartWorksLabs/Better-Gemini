@@ -27,7 +27,7 @@ Shows your [Gemini](https://gemini.google.com) **Current** and **Weekly** usage 
 
 ### Placement
 
-`usage.js` finds Gemini's chat bar on its own and places `#gemini-usage-footer` to match the bar's width, centred on Gemini's "can make mistakes" line when it is there. It follows the bar for a moment after clicks, key presses, and transitions, so it stays in place when [Hide Chat Bar for Gemini](../hide-chat-bar/) slides the bar.
+The footer only appears inside a chat (an address with a chat id), not on the new-chat screen. `usage.js` finds Gemini's chat bar on its own and places `#gemini-usage-footer` to match the bar's width, centred on Gemini's "can make mistakes" line when it is there. It follows the bar for a moment after clicks, key presses, and transitions, so it stays in place when [Hide Chat Bar for Gemini](../hide-chat-bar/) slides the bar.
 
 ### Storage
 
@@ -42,7 +42,7 @@ Shows your [Gemini](https://gemini.google.com) **Current** and **Weekly** usage 
 ├── usage.js           # Usage pills and context line under the chat bar
 ├── content.css
 ├── popup.html/.css/.js  # On/off switches
-├── icons/             # logo.png (placeholder) and the generated icons
+├── icons/             # logo.png and the generated icons
 ├── store/store-icon.png
 ├── test/usage.test.js
 └── PRIVACY.md

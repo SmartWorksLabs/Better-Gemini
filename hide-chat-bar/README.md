@@ -2,11 +2,11 @@
 
 Hides [Gemini](https://gemini.google.com)'s chat input bar until you need it, and gives its space back to the conversation. A **Hide Chat Bar** button on the page is where you change how that works. This extension is not made by Google and is not affiliated with Google.
 
-Versions 1.1 to 1.3 were called Better Gemini and also showed usage limits and message versions. Those are now separate extensions: [Usage Tracker for Gemini](../usage/) and [Message Versions for Gemini](../versions/).
+For usage limits and message versions, see the companion extensions [Usage Tracker for Gemini](../usage/) and [Message Versions for Gemini](../versions/).
 
 ## Features
 
-- **Hidden until you need it**: The chat bar fades and gives its space back to the conversation. It is fully invisible by default
+- **Hidden until you need it**: The chat bar fades and gives its space back to the conversation. It is fully invisible by default. The new-chat screen is left as is
 - **Adjustable visibility**: A slider sets how visible the hidden bar is, from 0% to 100%
 - **Smart reveal**: Hover or click modes, an optional hide delay, drafts keep the bar open, and type-anywhere to chat
 - **Stays out of the way**: The settings button prefers sitting beside other buttons when there is room; if that would cover chat text, it stacks under them instead
@@ -20,15 +20,15 @@ Versions 1.1 to 1.3 were called Better Gemini and also showed usage limits and m
 
 ## How it works
 
-`content.js` finds Gemini's chat bar (`.input-area-container`), tags it with `.hcb-bar`, and keeps its height in `--hcb-bar-height`. The pull-up layout (`hcb-docked` on `<body>`) applies only when the bar is docked at the bottom of an open chat. On the new-chat screen the composer stays in Gemini's own layout and only fades.
+`content.js` finds Gemini's chat bar (`.input-area-container`), tags it with `.hcb-bar`, and keeps its height in `--hcb-bar-height`. The pull-up layout (`hcb-docked` on `<body>`) applies only when the bar is docked at the bottom of an open chat. Everything (hiding, the settings button, type anywhere) is on only inside a chat, an address with a chat id. The new-chat screen and other pages are left exactly as Gemini shows them.
 
-Settings are stored in `chrome.storage.sync`: `corner`, `hiddenOpacity`, `revealMode`, `typeToChat`, `avoidOverlap`, `hideDelayEnabled`, `hideDelayMs`, `hideDelayUnit`, `pillStyle`, `firstInstalledDate`. Updating from 1.3 removes the settings and local data of the features that moved out (see `background.js`).
+Settings are stored in `chrome.storage.sync`: `corner`, `hiddenOpacity`, `revealMode`, `typeToChat`, `avoidOverlap`, `hideDelayEnabled`, `hideDelayMs`, `hideDelayUnit`, `pillStyle`, `firstInstalledDate`.
 
 ## Files
 
 ```
 ├── manifest.json
-├── background.js      # Default settings on install; cleanup on update from 1.3
+├── background.js      # Default settings on install
 ├── content.js         # Chat bar, settings button and menu, type anywhere
 ├── content.css        # Hidden and revealed bar
 ├── popup.html/.css    # Toolbar icon explanation

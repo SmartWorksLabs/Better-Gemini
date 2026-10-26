@@ -1,7 +1,8 @@
 /* Usage Tracker for Gemini — content styles */
 
 /* Footer box matches the chat bar width (disclaimer stays centered under it).
-   Context hangs left of the bar; usage hangs right — 0px gap. */
+   Context sits left of the bar and usage right, with equal gaps to the
+   column edges (balanceSides in usage.js). */
 .gemini-usage-footer {
   position: fixed;
   z-index: 999990;
@@ -33,8 +34,9 @@ body.dark-theme .gemini-usage-footer,
   position: absolute;
   top: 50%;
   display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
   min-width: 0;
   font-family: inherit !important;
   font-size: inherit !important;
@@ -50,7 +52,6 @@ body.dark-theme .gemini-usage-footer,
 .gemini-usage-context {
   right: 100%;
   margin-right: 0;
-  justify-content: flex-end;
 }
 
 .gemini-usage-pills {
@@ -58,9 +59,6 @@ body.dark-theme .gemini-usage-footer,
   margin-left: 0;
   pointer-events: auto;
   cursor: pointer;
-  gap: 16px;
-  align-items: flex-start;
-  justify-content: flex-start;
   max-width: none;
   overflow: visible;
 }
@@ -101,8 +99,8 @@ body.dark-theme .gemini-usage-footer .gu-label,
   opacity: 0.72;
 }
 
-.gemini-usage-context.level-warn .gu-label,
-.gemini-usage-context.level-danger .gu-label,
+.gemini-usage-context.level-warn > .gu-stack > .gu-stack-top .gu-label,
+.gemini-usage-context.level-danger > .gu-stack > .gu-stack-top .gu-label,
 .gemini-usage-pills.level-warn > .gu-stack > .gu-stack-top .gu-label,
 .gemini-usage-pills.level-danger > .gu-stack > .gu-stack-top .gu-label {
   color: inherit;
@@ -126,8 +124,8 @@ body.dark-theme .gemini-usage-footer .gu-value,
   color: #e8eaed;
 }
 
-.gemini-usage-context.level-warn .gu-value,
-.gemini-usage-context.level-danger .gu-value,
+.gemini-usage-context.level-warn .gu-value:not(.gu-value-meta),
+.gemini-usage-context.level-danger .gu-value:not(.gu-value-meta),
 .gemini-usage-pills.level-warn .gu-value:not(.gu-value-meta),
 .gemini-usage-pills.level-danger .gu-value:not(.gu-value-meta) {
   color: inherit;
@@ -140,7 +138,7 @@ body.dark-theme .gemini-usage-footer .gu-value,
   color: inherit;
 }
 
-.gemini-usage-pills .gu-stack {
+.gemini-usage-footer .gu-stack {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -150,8 +148,8 @@ body.dark-theme .gemini-usage-footer .gu-value,
   line-height: inherit;
 }
 
-.gemini-usage-pills .gu-stack-top,
-.gemini-usage-pills .gu-stack-meta {
+.gemini-usage-footer .gu-stack-top,
+.gemini-usage-footer .gu-stack-meta {
   display: block;
   white-space: nowrap;
   overflow: hidden;

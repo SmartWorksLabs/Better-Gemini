@@ -73,10 +73,35 @@
     return Date.now() - settings.firstInstalledDate > sevenDays;
   }
 
-  // The bar is always auto-hidden on Gemini pages.
+  // Only inside a chat (an address with a chat id). The new-chat screen and
+  // other pages are left alone.
+  function inChat() {
+    const p = location.pathname;
+    return /\/(?:app|c)\/[0-9a-f]+/i.test(p) || /\/gem\/[^/]+\/[0-9a-f]{8,}/i.test(p);
+  }
+
+  function applyPageState() {
+    const active = inChat();
+    document.body.classList.toggle('hcb-active', active);
+    if (!active) document.body.classList.remove('hcb-opened');
+    if (hostElement) hostElement.style.display = active ? '' : 'none';
+  }
+
+  // Gemini changes the address without reloading, e.g. when the first message
+  // of a new chat is sent.
+  function watchPage() {
+    let lastPath = location.pathname;
+    setInterval(() => {
+      if (location.pathname === lastPath) return;
+      lastPath = location.pathname;
+      applyPageState();
+    }, 300);
+  }
+
+  // The bar is auto-hidden inside chats.
   function applyHideState() {
     document.body.classList.add('hcb-enabled');
-    document.body.classList.add('hcb-active');
+    applyPageState();
     applyHiddenOpacity(settings.hiddenOpacity);
     applyHideDelay();
     applyRevealMode();
@@ -1258,7 +1283,7 @@
 
   // True when a key or paste should be moved into Gemini's composer.
   function canRedirectInput(e) {
-    if (!settings.typeToChat) return false;
+    if (!settings.typeToChat || !inChat()) return false;
     const path = e.composedPath();
     if (hostElement && path.includes(hostElement)) return false;
     if (path.some(isEditable) || isEditable(document.activeElement)) return false;
@@ -1275,7 +1300,7 @@
 
   // Paste that is not already aimed at the composer or another text box.
   function pasteShouldMove(e) {
-    if (!settings.typeToChat) return false;
+    if (!settings.typeToChat || !inChat()) return false;
     const path = e.composedPath();
     if (hostElement && path.includes(hostElement)) return false;
     if (hasOpenOverlay()) return false;
@@ -1968,6 +1993,8 @@
     await loadSettings();
     applyHideState();
     createPill();
+    applyPageState();
+    watchPage();
     watchInputContent();
     watchTyping();
     watchBarClicks();

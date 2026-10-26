@@ -83,6 +83,24 @@ async function step(name, fn) {
     assert.strictEqual(info.opacity, '1');
   });
 
+  await step('the new-chat screen is left alone, and chats are hidden again', async () => {
+    const state = () => page.evaluate(() => ({
+      active: document.body.classList.contains('hcb-active'),
+      opacity: getComputedStyle(document.querySelector('.input-area-container')).opacity,
+      pill: getComputedStyle(document.getElementById('hcb-pill-host')).display !== 'none'
+    }));
+    await page.evaluate(() => { document.activeElement.blur(); history.pushState({}, '', '/app'); });
+    await page.waitForTimeout(500);
+    assert.deepStrictEqual(await state(), { active: false, opacity: '1', pill: false });
+    const before = await page.evaluate(() => document.querySelector('[contenteditable]').textContent);
+    await page.keyboard.type('x');
+    const after = await page.evaluate(() => document.querySelector('[contenteditable]').textContent);
+    assert.strictEqual(after, before, 'type anywhere is off on the new-chat screen');
+    await page.evaluate(() => history.pushState({}, '', '/gem/abc/abcdef123456'));
+    await page.waitForTimeout(500);
+    assert.deepStrictEqual((await state()).active && (await state()).pill, true);
+  });
+
   await step('no script errors or warnings', async () => assert.deepStrictEqual(errors, []));
 
   await browser.close();

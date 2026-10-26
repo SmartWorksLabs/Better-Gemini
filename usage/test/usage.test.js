@@ -144,7 +144,46 @@ async function step(name, fn) {
     assert.ok(info.usage.includes('Current Usage·42%'), info.usage);
     assert.ok(info.usage.includes('Weekly Usage·93%'), info.usage);
     assert.ok(info.level.includes('level-danger'), 'worst of the two sets the colour');
-    assert.ok(/Context Window·.+ \/ 1M/.test(info.context), info.context);
+    assert.ok(/^Context Window·.+%Used·.+Remaining·.+Limit·1M$/.test(info.context), info.context);
+  });
+
+  await step('footer: context and usage keep equal gaps to the bar and to the column edges', async () => {
+    // Bar centred in the full width (sidebar closed), then in 400px..right (sidebar open).
+    for (const [left, width] of [[440, 400], [540, 600]]) {
+      const gaps = await upage.evaluate(async ([l, w]) => {
+        const bar = document.querySelector('.input-area-container');
+        bar.style.left = `${l}px`;
+        bar.style.width = `${w}px`;
+        window.dispatchEvent(new Event('resize'));
+        document.body.click();
+        await new Promise((r) => setTimeout(r, 300));
+        const right = document.documentElement.clientWidth;
+        const columnLeft = l - (right - (l + w));
+        const spread = (el) => {
+          const r = [...el.querySelectorAll('.gu-stack')].map((s) => s.getBoundingClientRect());
+          return [Math.min(...r.map((x) => x.left)), Math.max(...r.map((x) => x.right))];
+        };
+        const [cl, cr] = spread(document.querySelector('.gemini-usage-context'));
+        const [ul, ur] = spread(document.querySelector('.gemini-usage-pills'));
+        return [cl - columnLeft, right - ur, l - cr, ul - (l + w)].map(Math.round);
+      }, [left, width]);
+      const [edgeL, edgeR, barL, barR] = gaps;
+      assert.ok(Math.abs(edgeL - edgeR) <= 1 && Math.abs(barL - barR) <= 1, `gaps ${gaps}`);
+      assert.ok(edgeR >= 24, `gaps ${gaps}`);
+    }
+  });
+
+  await step('footer: hidden on the new-chat screen, back inside a chat', async () => {
+    const shown = () => upage.evaluate(() => {
+      const f = document.getElementById('gemini-usage-footer');
+      return !f.hidden && getComputedStyle(f).display !== 'none';
+    });
+    await upage.evaluate(() => history.pushState({}, '', '/app'));
+    await sleep(1200);
+    assert.strictEqual(await shown(), false);
+    await upage.evaluate(() => history.pushState({}, '', '/app/abc123def456'));
+    await sleep(1200);
+    assert.strictEqual(await shown(), true);
   });
 
   await step('popup settings hide each part, and both hide the footer', async () => {

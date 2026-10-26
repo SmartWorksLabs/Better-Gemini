@@ -4,7 +4,7 @@ Three separate Chrome extensions for [gemini.google.com](https://gemini.google.c
 
 | Folder | Extension | What it does |
 |---|---|---|
-| [hide-chat-bar/](hide-chat-bar/) | **Hide Chat Bar for Gemini** | Hides the chat bar until you hover, click, or start typing. This is the original listing (it was called Better Gemini in 1.1–1.3). |
+| [hide-chat-bar/](hide-chat-bar/) | **Hide Chat Bar for Gemini** | Hides the chat bar until you hover, click, or start typing. This is the original listing. |
 | [usage/](usage/) | **Usage Tracker for Gemini** | Current and Weekly usage limits, and how full this chat's context window is, under the chat bar. |
 | [versions/](versions/) | **Message Versions for Gemini** | Keeps every version when you edit a prompt, with Claude-style `‹ 1 / 2 ›` switching in the same chat. |
 
@@ -36,14 +36,13 @@ NODE_PATH="$(npm root -g)" node versions/test/versions.test.js
 
 ## Icons
 
-Each extension has one logo, `<folder>/icons/logo.png`, with a transparent background. This makes the toolbar icons and the store icon from it:
+Each extension has one logo, `<folder>/icons/logo.png`. A logo with a transparent background is used as a shape; a logo that fills its square (like Hide Chat Bar's) becomes a rounded tile. This makes the toolbar icons and the store icon from it:
 
 ```bash
 pip install Pillow
 python3 scripts/generate_icons.py hide-chat-bar   # or usage, versions
 ```
 
-The Usage Tracker and Message Versions logos are simple placeholders.
 
 ## Packaging for the Chrome Web Store
 

@@ -12,10 +12,6 @@ This policy describes how the extension handles information. It does not send th
 
 **Keys you type and text you paste, used only on the page.** Type anywhere to chat is on by default. When it is on, a letter, number, or symbol you type outside a text box is placed into the Gemini chat box. Pasting outside a text box does the same with the pasted text. Shortcuts that use Ctrl, Cmd, or Alt, and the space bar, are left alone. The key or pasted text is not saved and is not sent anywhere. You can turn this off from the Hide Chat Bar button on the page.
 
-## Earlier versions
-
-Versions 1.1 to 1.3 of this extension (named Better Gemini) also showed usage limits, the context window, and message versions, and kept data for those features in `chrome.storage.local`. Those features are now separate extensions: Usage Tracker for Gemini and Message Versions for Gemini. Updating to version 1.4 deletes the data those features had stored.
-
 ## What the extension does not do
 
 It does not collect browsing history, account details, location, health information, or payment information. It does not include ads. It does not sell or share information. It does not keep a count of how you use it.

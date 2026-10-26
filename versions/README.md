@@ -35,7 +35,7 @@ To see what it is doing on the real site, run `localStorage.mvDebug = '1'` in th
 ├── timelines.js       # Turn tree, saved copies, version controls
 ├── content.css
 ├── popup.html/.css/.js  # On/off switch
-├── icons/             # logo.png (placeholder) and the generated icons
+├── icons/             # logo.png and the generated icons
 ├── store/store-icon.png
 ├── test/
 │   ├── mock-page.js       # Mock of Gemini's chat markup

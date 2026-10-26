@@ -11,6 +11,7 @@
   const CONTEXT_TIERS = [32000, 128000, 1000000];
   const WARN_AT = 0.75;
   const DANGER_AT = 0.9;
+  const SIDE_MIN_GAP = 24; // px from the chat column edge to context and usage
   const BRIDGE_CMD = 'gemini-usage-bridge-cmd';
   const BRIDGE_SRC = 'gemini-usage-bridge';
 
@@ -187,52 +188,44 @@
     location.href = match ? `/u/${match[1]}/usage` : '/usage';
   }
 
-  function buildUsageStack(kind, metric) {
-    const stack = document.createElement('div');
-    stack.className = 'gu-stack';
-
-    const top = document.createElement('div');
-    top.className = 'gu-stack-top';
+  function buildPair(className, labelText, valueText, valueClass) {
+    const row = document.createElement('div');
+    row.className = className;
 
     const label = document.createElement('span');
     label.className = 'gu-label';
-    label.textContent = kind === 'current' ? 'Current Usage' : 'Weekly Usage';
+    label.textContent = labelText;
 
     const sep = document.createElement('span');
     sep.className = 'gu-sep';
     sep.textContent = '\u00B7';
 
     const value = document.createElement('span');
-    value.className = 'gu-value';
-    value.textContent = metric ? `${metric.percent}%` : '-';
+    value.className = valueClass;
+    value.textContent = valueText;
 
-    top.appendChild(label);
-    top.appendChild(sep);
-    top.appendChild(value);
+    row.appendChild(label);
+    row.appendChild(sep);
+    row.appendChild(value);
+    return row;
+  }
 
-    const reset = document.createElement('div');
-    reset.className = 'gu-stack-meta';
-
-    const resetLabel = document.createElement('span');
-    resetLabel.className = 'gu-label';
-    resetLabel.textContent = 'Resets';
-
-    const resetSep = document.createElement('span');
-    resetSep.className = 'gu-sep';
-    resetSep.textContent = '\u00B7';
-
-    const resetValue = document.createElement('span');
-    resetValue.className = 'gu-value gu-value-meta';
-    const when = formatReset(metric && metric.resetEpoch);
-    resetValue.textContent = when || '—';
-
-    reset.appendChild(resetLabel);
-    reset.appendChild(resetSep);
-    reset.appendChild(resetValue);
-
-    stack.appendChild(top);
-    stack.appendChild(reset);
+  // Two lines, e.g. "Current Usage · 1%" over "Resets · 6:31pm".
+  function buildStack(label, value, metaLabel, metaValue) {
+    const stack = document.createElement('div');
+    stack.className = 'gu-stack';
+    stack.appendChild(buildPair('gu-stack-top', label, value, 'gu-value'));
+    stack.appendChild(buildPair('gu-stack-meta', metaLabel, metaValue, 'gu-value gu-value-meta'));
     return stack;
+  }
+
+  function buildUsageStack(kind, metric) {
+    return buildStack(
+      kind === 'current' ? 'Current Usage' : 'Weekly Usage',
+      metric ? `${metric.percent}%` : '-',
+      'Resets',
+      formatReset(metric && metric.resetEpoch) || '—'
+    );
   }
 
   function renderUsageLabel() {
@@ -573,11 +566,17 @@
     renderUsageLabel();
   }
 
+  // Only inside a chat (an address with a chat id), not on the new-chat screen.
+  function inChat() {
+    const p = location.pathname;
+    return /\/(?:app|c)\/[0-9a-f]+/i.test(p) || /\/gem\/[^/]+\/[0-9a-f]{8,}/i.test(p);
+  }
+
   function updateFooterVisibility() {
     if (contextElement) contextElement.hidden = !settings.showContext;
     if (usageElement) usageElement.hidden = !settings.showUsage;
     if (footerElement) {
-      footerElement.hidden = !settings.showContext && !settings.showUsage;
+      footerElement.hidden = !inChat() || (!settings.showContext && !settings.showUsage);
     }
   }
 
@@ -590,22 +589,12 @@
       ratio >= DANGER_AT ? 'level-danger' : ratio >= WARN_AT ? 'level-warn' : 'level-ok'
     );
     contextElement.textContent = '';
-
-    const mark = document.createElement('span');
-    mark.className = 'gu-label';
-    mark.textContent = 'Context Window';
-
-    const sep = document.createElement('span');
-    sep.className = 'gu-sep';
-    sep.textContent = '\u00B7';
-
-    const value = document.createElement('span');
-    value.className = 'gu-value';
-    value.textContent = `${formatTokens(tokens)} / ${formatTokens(limit)}`;
-
-    contextElement.appendChild(mark);
-    contextElement.appendChild(sep);
-    contextElement.appendChild(value);
+    // Same two-stack shape as the usage side, so both sides can be the same width.
+    const percent = tokens > 0 && ratio < 0.005 ? '<1%' : `${Math.round(ratio * 100)}%`;
+    contextElement.appendChild(buildStack('Context Window', percent, 'Used', formatTokens(tokens)));
+    contextElement.appendChild(
+      buildStack('Remaining', formatTokens(Math.max(0, limit - tokens)), 'Limit', formatTokens(limit))
+    );
     placeChatFooter();
   }
 
@@ -629,6 +618,7 @@
   // Footer box matches the chat bar width so Gemini's disclaimer stays centered
   // under the bar. Context/usage hang flush outside the left/right edges.
   function placeChatFooter() {
+    updateFooterVisibility();
     if (!footerElement || footerElement.hidden) return;
     trackBar();
     if (!barElement || !barElement.isConnected) {
@@ -675,6 +665,28 @@
     footerElement.style.height = `${Math.round(height)}px`;
     footerElement.classList.toggle('theme-dark', isGeminiDark());
     footerElement.classList.add('placed');
+    balanceSides(barRect);
+  }
+
+  // Gemini centres the bar in the chat column, so the space beside it is the
+  // same on both sides. Context and usage get the same width (their stacks
+  // spread across it) and sit against the bar's ends, so their gaps to the bar
+  // and to the column edges match on both sides. When the column is too narrow
+  // they slide under the bar's ends, keeping SIDE_MIN_GAP to the edges.
+  function balanceSides(barRect) {
+    const viewportRight = document.documentElement.clientWidth || window.innerWidth;
+    const side = Math.max(0, viewportRight - barRect.right);
+    contextElement.style.width = '';
+    usageElement.style.width = '';
+    const width = Math.max(
+      settings.showContext ? contextElement.offsetWidth : 0,
+      settings.showUsage ? usageElement.offsetWidth : 0
+    );
+    contextElement.style.width = `${width}px`;
+    usageElement.style.width = `${width}px`;
+    const inset = Math.min(0, side - SIDE_MIN_GAP - width);
+    contextElement.style.marginRight = `${Math.round(inset)}px`;
+    usageElement.style.marginLeft = `${Math.round(inset)}px`;
   }
 
   function conversationKey() {

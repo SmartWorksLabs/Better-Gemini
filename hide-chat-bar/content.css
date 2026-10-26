@@ -2,15 +2,15 @@
 
 /* content.js finds the chat bar (Gemini's .input-area-container) and tags it
    with .hcb-bar, and keeps --hcb-bar-height up to date.
-   hcb-docked is added only when that bar sits at the bottom of an
-   open chat. The new-chat screen is left in Gemini's own layout. */
+   hcb-active is on only inside a chat (not the new-chat screen), and
+   hcb-docked only when the bar sits at the bottom of that chat. */
 
 .hcb-enabled .hcb-bar {
   transition: opacity 0.15s ease !important;
 }
 
-/* Fade every chat bar. On the new-chat screen this is the only change, so
-   the centered bar keeps its width, position, and model picker. */
+/* Fade the chat bar. Until it is docked this is the only change, so the
+   bar keeps its width, position, and model picker. */
 .hcb-active .hcb-bar {
   opacity: var(--hcb-hidden-opacity, 0) !important;
   transition: opacity 0.15s ease var(--hcb-hide-delay, 0ms) !important;

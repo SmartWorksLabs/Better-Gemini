@@ -5,6 +5,11 @@ Run from the repo root with the extension's folder:
 
 <folder>/icons/logo.png -> <folder>/icons/icon{size}.png
                         -> <folder>/store/store-icon.png
+
+A logo with a transparent background is used as a shape: the installed icons
+are the shape alone, and the store icon draws it in white on a blue tile.
+A logo that fills its whole square (no transparency) is used as a picture:
+every icon is that picture with rounded corners.
 """
 import os
 import sys
@@ -66,14 +71,46 @@ def store_icon(source):
     return clear_faint_pixels(canvas.resize((STORE_SIZE, STORE_SIZE), Image.LANCZOS))
 
 
+def has_transparency(image):
+    return image.getchannel('A').getextrema()[0] < 250
+
+
+def rounded_tile(source, size, tile):
+    """The whole picture as a rounded tile of `tile` px, centred on a `size` px canvas."""
+    big = tile * SUPERSAMPLE
+    art = source.resize((big, big), Image.LANCZOS)
+    mask = Image.new('L', (big, big), 0)
+    radius = round(big * STORE_RADIUS / STORE_TILE)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, big - 1, big - 1], radius=radius, fill=255)
+    art.putalpha(mask)
+    canvas = Image.new('RGBA', (size * SUPERSAMPLE, size * SUPERSAMPLE), (0, 0, 0, 0))
+    offset = (size - tile) // 2 * SUPERSAMPLE
+    canvas.alpha_composite(art, (offset, offset))
+    return canvas.resize((size, size), Image.LANCZOS)
+
+
+def picture_icons(source, folder):
+    """Toolbar sizes fill the whole square to stay legible; 128 and the store
+    icon keep Google's 16px transparent margin around a 96px tile."""
+    for size in SIZES:
+        tile = STORE_TILE if size == STORE_SIZE else size
+        rounded_tile(source, size, tile).save(
+            os.path.join(folder, 'icons', f'icon{size}.png'), 'PNG', optimize=True)
+    rounded_tile(source, STORE_SIZE, STORE_TILE).save(
+        os.path.join(folder, 'store', 'store-icon.png'), 'PNG', optimize=True)
+
+
 if __name__ == '__main__':
     if len(sys.argv) != 2:
         sys.exit('usage: python3 scripts/generate_icons.py <extension folder>')
     folder = sys.argv[1]
     source = Image.open(os.path.join(folder, 'icons', 'logo.png')).convert('RGBA')
+    os.makedirs(os.path.join(folder, 'store'), exist_ok=True)
+    if not has_transparency(source):
+        picture_icons(source, folder)
+        sys.exit()
     logo = trim_border(source)
     for size in SIZES:
         icon = clear_faint_pixels(logo.resize((size, size), Image.LANCZOS))
         icon.save(os.path.join(folder, 'icons', f'icon{size}.png'), 'PNG', optimize=True)
-    os.makedirs(os.path.join(folder, 'store'), exist_ok=True)
     store_icon(source).save(os.path.join(folder, 'store', 'store-icon.png'), 'PNG', optimize=True)
